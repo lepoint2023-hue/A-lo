@@ -301,7 +301,7 @@ function fiche(id) {
       </div>
       <div class="page">
         <div><h1 class="h1">${esc(i.title)}</h1>
-          <p class="muted">Taille ${esc(i.size)} · ${esc(i.color)}${i.brand ? " · " + esc(i.brand) : ""}</p></div>
+          <p class="muted">Taille ${esc(i.size)} · ${esc(i.color)}${i.pattern ? " (" + esc(i.pattern) + ")" : ""}${i.brand ? " · " + esc(i.brand) : ""}</p></div>
         <div class="box mini-row"><span><strong>${esc(i.condition)}</strong><span class="muted small block">${esc(CONDITION_HINTS[i.condition] || "")}</span></span></div>
         ${i.defects ? `<p class="box warnbox small"><strong>Défauts signalés :</strong> ${esc(i.defects)}</p>` : ""}
         <div class="tags">${i.instant ? `<span class="badge accent">${icon("bolt", 12)} Réservation instantanée</span>` : ""}<span class="badge">${esc(i.category)}</span><span class="badge">${esc(i.style)}</span>${i.occasions.map((x) => `<span class="badge">${esc(x)}</span>`).join("")}</div>
@@ -428,7 +428,7 @@ function itemForm(id) {
   if (id && (!existing || existing.ownerId !== S.me().id)) return { html: empty("Pièce introuvable", "", `<a class="btn" href="#/dressing">Retour</a>`) };
   if (!ui.draft || ui.draft._for !== (id || "new")) {
     ui.draft = existing ? JSON.parse(JSON.stringify(existing)) : {
-      photos: [], title: "", description: "", defects: "", brand: "", category: "", style: "", color: "", size: "", condition: "",
+      photos: [], title: "", description: "", defects: "", brand: "", category: "", style: "", color: "", pattern: "", size: "", condition: "",
       occasions: [], prices: { we: "", sem: "", deux: "", mois: "" }, deposit: "", cleaningFee: 8, cleaningRequired: false,
       handover: "main", instant: false, unavailable: []
     };
@@ -462,6 +462,7 @@ function itemForm(id) {
         <fieldset class="field"><legend>Couleur *</legend><div class="swatches">
           ${COLORS.map((c) => `<label class="sw" title="${c.name}"><input type="radio" name="color" value="${c.name}" ${d.color === c.name ? "checked" : ""}><span style="background:${c.hex}"></span><span class="sr">${c.name}</span></label>`).join("")}
         </div><span class="muted small" id="color-name">${esc(d.color)}</span></fieldset>
+        <label class="field"><span>Motif ou précision de couleur <span class="muted">(facultatif)</span></span><input name="pattern" maxlength="60" placeholder="Ex. imprimé léopard, rayures, fleurs, pied-de-poule" value="${esc(d.pattern || "")}"></label>
         <fieldset class="field"><legend>Occasions</legend><div class="chips wrap">
           ${OCCASIONS.map((o) => `<label class="chip check"><input type="checkbox" name="occasions" value="${o}" ${d.occasions.includes(o) ? "checked" : ""}><span>${o}</span></label>`).join("")}
         </div></fieldset>
@@ -523,7 +524,7 @@ function photoStrip(d) {
 
 function syncDraft(form) {
   const d = ui.draft, fd = new FormData(form);
-  for (const k of ["title", "description", "defects", "brand", "category", "style", "size", "condition"]) d[k] = fd.get(k) ?? d[k];
+  for (const k of ["title", "description", "defects", "brand", "category", "style", "size", "condition", "pattern"]) d[k] = fd.get(k) ?? d[k];
   d.color = fd.get("color") || d.color;
   d.occasions = fd.getAll("occasions");
   d.prices = Object.fromEntries(DURATIONS.map((x) => [x.id, num(fd.get("p-" + x.id))]));
@@ -977,6 +978,7 @@ function applyAI(a) {
   set("color", a.color, COLORS.map((c) => c.name));
   set("size", a.size, SIZES);
   set("brand", typeof a.brand === "string" ? a.brand.slice(0, 40) : "");
+  set("pattern", typeof a.pattern === "string" ? a.pattern.slice(0, 60) : "");
   if (!d.occasions.length && Array.isArray(a.occasions)) {
     d.occasions = a.occasions.filter((o) => OCCASIONS.includes(o));
     if (d.occasions.length) n++;

@@ -6,14 +6,25 @@ export const STYLES = ["Chic", "Classique", "Bohème", "Glamour", "Vintage", "Mi
 export const COLORS = [
   { name: "Noir", hex: "#1F1F1D" },
   { name: "Blanc", hex: "#FFFFFF" },
+  { name: "Écru", hex: "#F3EBDA" },
   { name: "Beige", hex: "#E3D5C0" },
+  { name: "Camel", hex: "#C19A6B" },
+  { name: "Marron", hex: "#6F4E37" },
+  { name: "Gris", hex: "#9A9A9A" },
   { name: "Rouge", hex: "#B3312C" },
+  { name: "Bordeaux", hex: "#6D1A2A" },
   { name: "Rose", hex: "#E3A9B5" },
-  { name: "Bleu", hex: "#2E4A7D" },
+  { name: "Orange", hex: "#E07B39" },
+  { name: "Jaune", hex: "#E8C547" },
   { name: "Vert", hex: "#2F6B4F" },
+  { name: "Kaki", hex: "#7A7A4B" },
+  { name: "Bleu", hex: "#4A78B5" },
+  { name: "Marine", hex: "#1F2E4D" },
+  { name: "Turquoise", hex: "#3AAFA9" },
   { name: "Violet", hex: "#7A5C99" },
   { name: "Doré", hex: "#C9A54C" },
-  { name: "Argenté", hex: "#B8BCC2" }
+  { name: "Argenté", hex: "#B8BCC2" },
+  { name: "Multicolore", hex: "conic-gradient(#B3312C, #E8C547, #2F6B4F, #4A78B5, #7A5C99, #B3312C)" }
 ];
 export const SIZES = ["XS", "S", "M", "L", "XL", "34", "36", "38", "40", "42", "44", "46", "48", "50", "52", "Unique"];
 export const OCCASIONS = ["Mariage", "Soirée", "Bal", "Communion", "Cocktail", "Gala", "Baptême"];

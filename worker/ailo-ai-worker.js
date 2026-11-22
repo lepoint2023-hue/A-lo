@@ -12,20 +12,21 @@ const MODEL = "google/gemini-3.1-flash-lite";
 const MAX_BODY = 4_000_000; // ~4 Mo : 3 photos réduites par l'app passent largement
 
 const LISTS = {
-  category: ["Robe", "Costume", "Combinaison", "Jupe", "Haut", "Pantalon", "Veste", "Accessoire", "Chaussures"],
+  category: ["Robe", "Costume", "Combinaison", "Jupe", "Haut", "Pantalon", "Veste", "Manteau", "Sac", "Accessoire", "Chaussures"],
   style: ["Chic", "Classique", "Bohème", "Glamour", "Vintage", "Minimaliste", "Rock"],
-  color: ["Noir", "Blanc", "Beige", "Rouge", "Rose", "Bleu", "Vert", "Violet", "Doré", "Argenté"],
+  color: ["Noir", "Blanc", "Écru", "Beige", "Camel", "Marron", "Gris", "Rouge", "Bordeaux", "Rose", "Orange", "Jaune", "Vert", "Kaki", "Bleu", "Marine", "Turquoise", "Violet", "Doré", "Argenté", "Multicolore"],
   size: ["XS", "S", "M", "L", "XL", "34", "36", "38", "40", "42", "44", "46", "48", "50", "52", "Unique"],
   occasions: ["Mariage", "Soirée", "Bal", "Communion", "Cocktail", "Gala", "Baptême"]
 };
 
 const SYSTEM = `Tu aides une particulière à publier un vêtement à louer sur Aïlo, une app belge de location de tenues pour des événements.
 Analyse les photos et réponds UNIQUEMENT avec un objet JSON de cette forme :
-{"category": "...", "style": "...", "color": "...", "size": "... ou null", "brand": "... ou null", "occasions": ["..."], "title": "...", "description": "...", "estimatedValue": nombre ou null}
+{"category": "...", "style": "...", "color": "...", "pattern": "... ou null", "size": "... ou null", "brand": "... ou null", "occasions": ["..."], "title": "...", "description": "...", "estimatedValue": nombre ou null}
 Règles :
 - category parmi : ${LISTS.category.join(", ")}.
 - style parmi : ${LISTS.style.join(", ")}.
-- color parmi : ${LISTS.color.join(", ")} (la couleur dominante).
+- color parmi : ${LISTS.color.join(", ")} (la couleur dominante ; Multicolore si aucune ne domine).
+- pattern : motif ou précision en 2 à 4 mots si la pièce n'est pas unie (ex. « imprimé léopard », « rayures marinières », « fleurs ») ; null si unie.
 - size parmi : ${LISTS.size.join(", ")}, UNIQUEMENT si elle est lisible sur une étiquette ; sinon null.
 - brand UNIQUEMENT si elle est lisible sur une étiquette ou un logo ; sinon null. N'invente jamais.
 - occasions : 1 à 3 valeurs parmi : ${LISTS.occasions.join(", ")}.
@@ -100,6 +101,7 @@ export function clean(a = {}) {
     color: pick(a.color, LISTS.color),
     size: pick(a.size, LISTS.size),
     brand: text(a.brand, 40),
+    pattern: text(a.pattern, 60),
     occasions: Array.isArray(a.occasions) ? a.occasions.filter((o) => LISTS.occasions.includes(o)).slice(0, 3) : [],
     title: text(a.title, 60),
     description: text(a.description, 500),

@@ -224,3 +224,5 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke execute on function public.busy_ranges() from public, anon;
 grant execute on function public.busy_ranges() to authenticated;
+-- v0.4.3 : motif ou précision de couleur (ex. « imprimé léopard »)
+alter table public.items add column if not exists pattern text not null default '' check (char_length(pattern) <= 60);

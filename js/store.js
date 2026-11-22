@@ -25,14 +25,14 @@ const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7);
 // ---------- Conversions base <-> app ----------
 const toItem = (r) => ({
   id: r.id, ownerId: r.owner_id, title: r.title, description: r.description || "", defects: r.defects || "", brand: r.brand || "",
-  category: r.category, style: r.style, color: r.color, size: r.size, condition: r.condition, occasions: r.occasions || [],
+  category: r.category, style: r.style, color: r.color, pattern: r.pattern || "", size: r.size, condition: r.condition, occasions: r.occasions || [],
   prices: r.prices || {}, deposit: Number(r.deposit), cleaningFee: Number(r.cleaning_fee), cleaningRequired: r.cleaning_required,
   handover: r.handover, instant: r.instant, unavailable: r.unavailable || [], photos: r.photos || [], status: r.status,
   createdAt: (r.created_at || "").slice(0, 10), tint: tintFor(hash(r.id))
 });
 const fromItem = (i) => ({
   id: i.id, owner_id: i.ownerId, title: i.title, description: i.description, defects: i.defects, brand: i.brand,
-  category: i.category, style: i.style, color: i.color, size: i.size, condition: i.condition, occasions: i.occasions,
+  category: i.category, style: i.style, color: i.color, pattern: i.pattern || "", size: i.size, condition: i.condition, occasions: i.occasions,
   prices: i.prices, deposit: Number(i.deposit) || 0, cleaning_fee: Number(i.cleaningFee) || 0, cleaning_required: !!i.cleaningRequired,
   handover: i.handover, instant: !!i.instant, unavailable: i.unavailable || [], photos: i.photos, status: i.status
 });
@@ -193,7 +193,7 @@ export function catalog(f = {}) {
   const q = (f.q || "").trim().toLowerCase();
   return db.items.filter((i) => {
     if (i.status !== "online" || i.ownerId === db.me || !offeredDurations(i).length) return false;
-    if (q && !(i.title + " " + i.category + " " + i.style + " " + i.color + " " + (i.brand || "") + " " + i.size).toLowerCase().includes(q)) return false;
+    if (q && !(i.title + " " + i.category + " " + i.style + " " + i.color + " " + (i.pattern || "") + " " + (i.brand || "") + " " + i.size).toLowerCase().includes(q)) return false;
     if (f.category && i.category !== f.category) return false;
     if (f.style && i.style !== f.style) return false;
     if (f.color && i.color !== f.color) return false;
