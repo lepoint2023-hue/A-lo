@@ -1,50 +1,189 @@
-// Aïlo — couche de données.
-// Version de démonstration : tout est enregistré dans le navigateur (localStorage).
-// Toutes les lectures/écritures passent par ce fichier : c'est lui qu'on
-// remplacera par Supabase (base de données) et Stripe (paiements).
+// Aïlo — couche de données (v0.4 : Supabase)
+// L'app lit une copie en mémoire (rapide, synchrone) ; chaque modification
+// est appliquée tout de suite à cette copie puis envoyée à Supabase.
+// En cas d'échec, on prévient et on recharge tout depuis la base.
 
-import { demoData, DURATIONS, COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, BUFFER_DAYS, SHIPPING_DAYS, addDays } from "./data.js";
+import { DURATIONS, COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, BUFFER_DAYS, SHIPPING_DAYS, addDays, tintFor } from "./data.js";
 import { distanceKm } from "./geo.js";
+import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
-const KEY = "ailo-v3"; // changé en v0.3 (localisation, envoi groupé, crédit)
-let db = load();
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce" }
+});
 
-function load() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) { /* stockage indisponible : on repart des données de démo */ }
-  return demoData();
+const empty = () => ({ me: null, users: {}, items: [], reservations: [], messages: {}, favorites: [], busy: [] });
+let db = empty();
+let session = null;
+let recovering = false;
+
+const toast = (m) => window.dispatchEvent(new CustomEvent("ailo:toast", { detail: m }));
+const refresh = () => window.dispatchEvent(new Event("ailo:refresh"));
+const round = (n) => Math.round(n * 100) / 100;
+const uuid = () => crypto.randomUUID();
+const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7);
+
+// ---------- Conversions base <-> app ----------
+const toItem = (r) => ({
+  id: r.id, ownerId: r.owner_id, title: r.title, description: r.description || "", defects: r.defects || "", brand: r.brand || "",
+  category: r.category, style: r.style, color: r.color, size: r.size, condition: r.condition, occasions: r.occasions || [],
+  prices: r.prices || {}, deposit: Number(r.deposit), cleaningFee: Number(r.cleaning_fee), cleaningRequired: r.cleaning_required,
+  handover: r.handover, instant: r.instant, unavailable: r.unavailable || [], photos: r.photos || [], status: r.status,
+  createdAt: (r.created_at || "").slice(0, 10), tint: tintFor(hash(r.id))
+});
+const fromItem = (i) => ({
+  id: i.id, owner_id: i.ownerId, title: i.title, description: i.description, defects: i.defects, brand: i.brand,
+  category: i.category, style: i.style, color: i.color, size: i.size, condition: i.condition, occasions: i.occasions,
+  prices: i.prices, deposit: Number(i.deposit) || 0, cleaning_fee: Number(i.cleaningFee) || 0, cleaning_required: !!i.cleaningRequired,
+  handover: i.handover, instant: !!i.instant, unavailable: i.unavailable || [], photos: i.photos, status: i.status
+});
+const toRes = (r) => ({
+  id: r.id, thread: r.thread_id, itemId: r.item_id, renterId: r.renter_id, ownerId: r.owner_id, durationId: r.duration_id,
+  start: r.start_date, end: r.end_date, cleaning: r.cleaning, handover: r.handover, price: Number(r.price),
+  cleaningFee: Number(r.cleaning_fee), shippingFee: Number(r.shipping_fee), serviceFee: Number(r.service_fee),
+  creditUsed: Number(r.credit_used), deposit: Number(r.deposit), status: r.status, createdAt: r.created_at
+});
+const fromRes = (r) => ({
+  id: r.id, thread_id: r.thread, item_id: r.itemId, renter_id: r.renterId, owner_id: r.ownerId, duration_id: r.durationId,
+  start_date: r.start, end_date: r.end, cleaning: r.cleaning, handover: r.handover, price: r.price, cleaning_fee: r.cleaningFee,
+  shipping_fee: r.shippingFee, service_fee: r.serviceFee, credit_used: r.creditUsed, deposit: r.deposit, status: "demandee"
+});
+const toUser = (p, revs) => {
+  const mine = revs.filter((x) => x.target_id === p.id);
+  return {
+    id: p.id, name: p.name || "", zip: p.zip, city: p.city || "", lat: p.lat, lng: p.lng, photo: p.photo_url || "",
+    plan: p.plan, type: p.kind, verified: p.verified, acceptedTerms: p.accepted_terms_at,
+    reviews: mine.length, rating: mine.length ? mine.reduce((s, x) => s + x.rating, 0) / mine.length : null
+  };
+};
+
+// ---------- Session ----------
+export async function init() {
+  sb.auth.onAuthStateChange((event, s) => {
+    session = s;
+    if (event === "PASSWORD_RECOVERY") { recovering = true; refresh(); }
+  });
+  const { data } = await sb.auth.getSession();
+  session = data.session;
+  if (session) await sync().catch(() => toast("Connexion à la base impossible. Vérifie ta connexion internet."));
+}
+export const hasSession = () => !!session;
+export const isRecovering = () => recovering;
+export const myEmail = () => session?.user?.email || "";
+
+const authMsg = (e) => {
+  const m = (e && e.message) || "";
+  if (/invalid login/i.test(m)) return "E-mail ou mot de passe incorrect.";
+  if (/already registered|already exists/i.test(m)) return "Un compte existe déjà avec cet e-mail : connecte-toi.";
+  if (/password/i.test(m) && /(6|8|short|weak)/i.test(m)) return "Mot de passe trop faible : 8 caractères minimum.";
+  if (/email.*not confirmed/i.test(m)) return "Confirme d'abord ton e-mail (lien reçu par e-mail).";
+  if (/rate limit|too many/i.test(m)) return "Trop de tentatives : réessaie dans quelques minutes.";
+  return m || "Une erreur est survenue.";
+};
+const appUrl = () => location.origin + location.pathname;
+
+export async function signUp(email, password) {
+  const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: appUrl() } });
+  if (error) return { error: authMsg(error) };
+  session = data.session;
+  if (!session) return { needConfirm: true };
+  await sync();
+  return {};
+}
+export async function signIn(email, password) {
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) return { error: authMsg(error) };
+  session = data.session;
+  await sync();
+  return {};
+}
+export async function resetPassword(email) {
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
+  return error ? { error: authMsg(error) } : {};
+}
+export async function setNewPassword(password) {
+  const { error } = await sb.auth.updateUser({ password });
+  if (error) return { error: authMsg(error) };
+  recovering = false;
+  await sync();
+  return {};
+}
+export async function signOut() {
+  await sb.auth.signOut();
+  session = null;
+  db = empty();
 }
 
-export function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
-  catch (e) {
-    window.dispatchEvent(new CustomEvent("ailo:toast", { detail: "Mémoire du navigateur pleine : supprime quelques photos. (Avec la vraie base de données, cette limite disparaît.)" }));
+// ---------- Chargement ----------
+let syncing = null;
+export function sync() {
+  if (!session) return Promise.resolve();
+  if (syncing) return syncing;
+  syncing = (async () => {
+    const uid = session.user.id;
+    const [items, resas, favs, busy] = await Promise.all([
+      sb.from("items").select("*").neq("status", "removed").order("created_at", { ascending: false }).limit(1000),
+      sb.from("reservations").select("*"),
+      sb.from("favorites").select("item_id"),
+      sb.rpc("busy_ranges")
+    ]);
+    for (const r of [items, resas, favs, busy]) if (r.error) throw r.error;
+    const ids = new Set([uid]);
+    items.data.forEach((i) => ids.add(i.owner_id));
+    resas.data.forEach((r) => { ids.add(r.owner_id); ids.add(r.renter_id); });
+    const threads = [...new Set(resas.data.map((r) => r.thread_id))];
+    const [profs, revs, msgs] = await Promise.all([
+      sb.from("profiles").select("*").in("id", [...ids]),
+      sb.from("reviews").select("reservation_id,author_id,target_id,rating,body,created_at").in("target_id", [...ids]),
+      threads.length ? sb.from("messages").select("*").in("thread_id", threads).order("created_at") : Promise.resolve({ data: [] })
+    ]);
+    for (const r of [profs, revs, msgs]) if (r.error) throw r.error;
+    const next = empty();
+    next.me = uid;
+    profs.data.forEach((p) => { next.users[p.id] = toUser(p, revs.data); });
+    if (!next.users[uid]) next.users[uid] = toUser({ id: uid }, []);
+    next.items = items.data.map(toItem);
+    next.reservations = resas.data.map(toRes);
+    const byRes = Object.fromEntries(revs.data.map((v) => [v.reservation_id, v]));
+    next.reservations.forEach((r) => { const v = byRes[r.id]; if (v) r.review = { rating: v.rating, text: v.body || "" }; });
+    msgs.data.forEach((m) => (next.messages[m.thread_id] = next.messages[m.thread_id] || []).push({ from: m.sender_id || "system", text: m.body, at: m.created_at }));
+    next.favorites = favs.data.map((f) => f.item_id);
+    next.busy = busy.data.map((b) => ({ itemId: b.item_id, thread: b.thread_id, start: b.start_date, end: b.end_date, handover: b.handover }));
+    db = next;
+  })().finally(() => { syncing = null; });
+  return syncing;
+}
+
+// Envoie une écriture ; en cas d'erreur, prévient et recharge la base
+async function write(promiseFn, failMsg) {
+  try {
+    const res = await promiseFn();
+    if (res && res.error) throw res.error;
+    return true;
+  } catch (e) {
+    console.error(e);
+    toast(failMsg + " " + ((e && e.message) || ""));
+    await sync().catch(() => {});
+    refresh();
     return false;
   }
 }
 
-export function resetDemo() { db = demoData(); save(); }
-const nextId = (p) => { db.seq = (db.seq || 100) + 1; return p + db.seq; };
-const round = (n) => Math.round(n * 100) / 100;
-
 // ---------- Lecture ----------
-export const me = () => db.users[db.me];
-export const user = (id) => db.users[id];
+export const me = () => db.users[db.me] || { id: null, name: "", city: "", reviews: 0, rating: null };
+export const user = (id) => db.users[id] || { id, name: "Membre", city: "", reviews: 0, rating: null };
 export const item = (id) => db.items.find((i) => i.id === id);
 export const reservation = (id) => db.reservations.find((r) => r.id === id);
 export const isFav = (id) => db.favorites.includes(id);
 export const myItems = () => db.items.filter((i) => i.ownerId === db.me);
-export const favorites = () => db.items.filter((i) => db.favorites.includes(i.id));
-export const isOnboarded = () => !!(me().acceptedTerms && me().name);
+export const favorites = () => db.items.filter((i) => db.favorites.includes(i.id) && i.status === "online");
+export const isOnboarded = () => !!(session && me().name && me().acceptedTerms);
 
 export function distanceTo(userId) {
   const a = me(), b = user(userId);
   return distanceKm(a.lat, a.lng, b.lat, b.lng);
 }
-
 export const offeredDurations = (itm) => DURATIONS.filter((d) => Number(itm.prices[d.id]) > 0);
+export const minPrice = (i) => Math.min(...offeredDurations(i).map((d) => Number(i.prices[d.id])));
 
 export function brands() {
   return [...new Set(db.items.filter((i) => i.status === "online" && i.ownerId !== db.me && i.brand).map((i) => i.brand))].sort((a, b) => a.localeCompare(b, "fr"));
@@ -53,7 +192,7 @@ export function brands() {
 export function catalog(f = {}) {
   const q = (f.q || "").trim().toLowerCase();
   return db.items.filter((i) => {
-    if (i.status !== "online" || i.ownerId === db.me) return false;
+    if (i.status !== "online" || i.ownerId === db.me || !offeredDurations(i).length) return false;
     if (q && !(i.title + " " + i.category + " " + i.style + " " + i.color + " " + (i.brand || "") + " " + i.size).toLowerCase().includes(q)) return false;
     if (f.category && i.category !== f.category) return false;
     if (f.style && i.style !== f.style) return false;
@@ -66,50 +205,44 @@ export function catalog(f = {}) {
     if (f.maxPrice && minPrice(i) > Number(f.maxPrice)) return false;
     if (f.radius) {
       const d = distanceTo(i.ownerId);
-      // hors rayon : visible seulement si l'envoi est possible
-      if (d !== null && d > Number(f.radius) && i.handover === "main") return false;
-      if (d !== null && d > Number(f.radius) && !f.includeShipping) return false;
+      if (d !== null && d > Number(f.radius) && (i.handover === "main" || !f.includeShipping)) return false;
     }
     if (f.date && !isAvailable(i.id, f.date, addDays(f.date, 3), "main")) return false;
     return true;
   }).sort((a, b) => {
     if (f.sort === "price") return minPrice(a) - minPrice(b);
-    if (f.sort === "new") return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+    if (f.sort === "new") return b.createdAt.localeCompare(a.createdAt);
     return (distanceTo(a.ownerId) ?? 9999) - (distanceTo(b.ownerId) ?? 9999);
   });
 }
-export const minPrice = (i) => Math.min(...offeredDurations(i).map((d) => Number(i.prices[d.id])));
 
-// Seules les réservations « principales » (une par colis) sont listées
 const isMain = (r) => r.thread === r.id;
-export function myRentals() { return db.reservations.filter((r) => r.renterId === db.me && isMain(r)).sort(byStart); }
-export function myLendings() { return db.reservations.filter((r) => r.ownerId === db.me && isMain(r)).sort(byStart); }
 const byStart = (a, b) => b.start.localeCompare(a.start);
+export const myRentals = () => db.reservations.filter((r) => r.renterId === db.me && isMain(r)).sort(byStart);
+export const myLendings = () => db.reservations.filter((r) => r.ownerId === db.me && isMain(r)).sort(byStart);
 export const group = (r) => db.reservations.filter((x) => x.thread === r.thread);
 
 export function conversations() {
   return db.reservations
-    .filter((r) => isMain(r) && (r.renterId === db.me || r.ownerId === db.me) && (db.messages[r.id] || []).length)
+    .filter((r) => isMain(r) && (db.messages[r.id] || []).length)
     .map((r) => ({ r, last: db.messages[r.id][db.messages[r.id].length - 1] }))
     .sort((a, b) => (b.last.at || "").localeCompare(a.last.at || ""));
 }
 export const messages = (rid) => db.messages[rid] || [];
+export const receivedReviews = () => db.reservations.filter((r) => r.ownerId === db.me && r.review);
 
 // ---------- Argent ----------
 export const payoutFor = (r) => round(r.price * (1 - COMMISSION_RATE) + r.cleaningFee);
 export const groupPayout = (r) => round(group(r).reduce((s, x) => s + payoutFor(x), 0));
 export const serviceFeeFor = (priceSum) => round(SERVICE_FEE.fixed + priceSum * SERVICE_FEE.rate);
-
-const ACTIVE = ["confirmee", "remise", "rendue"];
-export function earnings() { // gains prévus (locations confirmées, en cours ou terminées)
-  return round(db.reservations.filter((r) => r.ownerId === db.me && [...ACTIVE, "terminee"].includes(r.status)).reduce((s, r) => s + payoutFor(r), 0));
+export function earnings() {
+  return round(db.reservations.filter((r) => r.ownerId === db.me && ["confirmee", "remise", "rendue", "terminee"].includes(r.status)).reduce((s, r) => s + payoutFor(r), 0));
 }
-export function credit() { // crédit disponible : gains des locations terminées, moins ce qui a déjà servi
+export function credit() {
   const earned = db.reservations.filter((r) => r.ownerId === db.me && r.status === "terminee").reduce((s, r) => s + payoutFor(r), 0);
-  return Math.max(0, round(earned - (db.creditUsed || 0)));
+  const used = db.reservations.filter((r) => r.renterId === db.me && !["refusee", "annulee"].includes(r.status)).reduce((s, r) => s + (r.creditUsed || 0), 0);
+  return Math.max(0, round(earned - used));
 }
-
-// Devis d'un colis : la pièce choisie + d'autres pièces de la même loueuse
 export function quote({ itemIds, durationId, cleaning, handover, useCredit }) {
   const its = itemIds.map(item);
   const price = round(its.reduce((s, i) => s + Number(i.prices[durationId] || 0), 0));
@@ -119,58 +252,71 @@ export function quote({ itemIds, durationId, cleaning, handover, useCredit }) {
   const deposit = its.reduce((s, i) => s + Number(i.deposit || 0), 0);
   const payable = round(price + cleaningFee + shippingFee + serviceFee);
   const creditUsed = useCredit ? Math.min(credit(), payable) : 0;
-  return {
-    price, cleaningFee, shippingFee, serviceFee, deposit, creditUsed,
-    total: round(payable - creditUsed + deposit),
-    shippingOk: handover !== "envoi" || price >= SHIPPING_MIN,
-    missingForShipping: Math.max(0, round(SHIPPING_MIN - price))
-  };
+  return { price, cleaningFee, shippingFee, serviceFee, deposit, creditUsed, total: round(payable - creditUsed + deposit),
+    shippingOk: handover !== "envoi" || price >= SHIPPING_MIN, missingForShipping: Math.max(0, round(SHIPPING_MIN - price)) };
 }
 
 // ---------- Disponibilités ----------
-const BLOCKING = ["demandee", "confirmee", "remise", "rendue"];
 function blockedSpan(start, end, handover) {
   const t = handover === "envoi" ? SHIPPING_DAYS : 0;
   return { start: addDays(start, -t), end: addDays(end, t + BUFFER_DAYS) };
 }
 export function bookedRanges(itemId) {
-  const own = (item(itemId).unavailable || []).map((u) => ({ start: u.start, end: u.end, own: true }));
-  return db.reservations
-    .filter((r) => r.itemId === itemId && BLOCKING.includes(r.status))
-    .map((r) => blockedSpan(r.start, r.end, r.handover)).concat(own);
+  const own = ((item(itemId) || {}).unavailable || []).map((u) => ({ start: u.start, end: u.end, own: true }));
+  return db.busy.filter((b) => b.itemId === itemId).map((b) => blockedSpan(b.start, b.end, b.handover)).concat(own);
 }
 export function isAvailable(itemId, start, end, handover, ignoreThread) {
   const want = blockedSpan(start, end, handover);
   const itm = item(itemId);
+  if (!itm) return false;
   if ((itm.unavailable || []).some((u) => want.start <= u.end && want.end >= u.start)) return false;
-  return !db.reservations.some((r) => {
-    if (r.itemId !== itemId || r.thread === ignoreThread || !BLOCKING.includes(r.status)) return false;
-    const b = blockedSpan(r.start, r.end, r.handover);
-    return want.start <= b.end && want.end >= b.start;
+  return !db.busy.some((b) => {
+    if (b.itemId !== itemId || b.thread === ignoreThread) return false;
+    const s = blockedSpan(b.start, b.end, b.handover);
+    return want.start <= s.end && want.end >= s.start;
   });
+}
+
+// ---------- Photos ----------
+async function uploadPhoto(dataUrl) {
+  const blob = await (await fetch(dataUrl)).blob();
+  const path = `${db.me}/${uuid()}.jpg`;
+  const { error } = await sb.storage.from("photos").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+  if (error) throw error;
+  return sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
 }
 
 // ---------- Écriture ----------
 export function toggleFav(id) {
-  const k = db.favorites.indexOf(id);
-  if (k >= 0) db.favorites.splice(k, 1); else db.favorites.push(id);
-  save();
+  const on = db.favorites.includes(id);
+  if (on) db.favorites = db.favorites.filter((f) => f !== id); else db.favorites.push(id);
+  write(() => on ? sb.from("favorites").delete().eq("user_id", db.me).eq("item_id", id) : sb.from("favorites").insert({ user_id: db.me, item_id: id }), "Favori non enregistré.");
 }
 
 export function saveItem(data) {
-  if (data.id) Object.assign(item(data.id), data);
-  else {
-    Object.assign(data, { id: nextId("i"), ownerId: db.me, status: "online", createdAt: new Date().toISOString().slice(0, 10), tint: "#E5D9D0" });
-    db.items.push(data);
-  }
-  save();
-  return data.id;
+  const isNew = !data.id;
+  const itm = Object.assign({}, data, isNew ? { id: uuid(), ownerId: db.me, status: "online", createdAt: new Date().toISOString().slice(0, 10) } : {});
+  itm.tint = tintFor(hash(itm.id));
+  const k = db.items.findIndex((i) => i.id === itm.id);
+  if (k >= 0) db.items[k] = Object.assign(db.items[k], itm); else db.items.unshift(itm);
+  write(async () => {
+    const photos = [];
+    for (const p of itm.photos) photos.push(p.startsWith("data:") ? await uploadPhoto(p) : p);
+    itm.photos = photos;
+    const res = await sb.from("items").upsert(fromItem(itm));
+    if (!res.error) toast(isNew ? "Ta pièce est en ligne !" : "Modifications enregistrées");
+    return res;
+  }, "La pièce n'a pas pu être enregistrée.");
+  return itm.id;
 }
-export function setItemStatus(id, status) { item(id).status = status; save(); }
+export function setItemStatus(id, status) {
+  item(id).status = status;
+  write(() => sb.from("items").update({ status }).eq("id", id), "Changement non enregistré.");
+}
 export function deleteItem(id) {
   db.items = db.items.filter((i) => i.id !== id);
   db.favorites = db.favorites.filter((f) => f !== id);
-  save();
+  write(() => sb.from("items").update({ status: "removed" }).eq("id", id), "Suppression non enregistrée.");
 }
 
 export function book({ itemIds, durationId, start, cleaning, handover, useCredit }) {
@@ -181,28 +327,32 @@ export function book({ itemIds, durationId, start, cleaning, handover, useCredit
   if (!q.shippingOk) return { error: `L'envoi demande au moins ${SHIPPING_MIN} € de location.` };
   const first = item(itemIds[0]);
   const instant = itemIds.every((id) => item(id).instant);
-  const mainId = nextId("r");
+  const mainId = uuid();
   const now = new Date().toISOString();
-  itemIds.forEach((id, k) => {
+  const rows = itemIds.map((id, k) => {
     const i = item(id);
-    db.reservations.push({
-      id: k === 0 ? mainId : nextId("r"), thread: mainId, itemId: id, renterId: db.me, ownerId: first.ownerId, durationId, start, end,
-      cleaning, handover, price: Number(i.prices[durationId]), cleaningFee: (cleaning === "forfait" || i.cleaningRequired) ? Number(i.cleaningFee || 0) : 0,
-      deposit: Number(i.deposit || 0),
+    return {
+      id: k === 0 ? mainId : uuid(), thread: mainId, itemId: id, renterId: db.me, ownerId: first.ownerId, durationId, start, end, cleaning, handover,
+      price: Number(i.prices[durationId]), cleaningFee: (cleaning === "forfait" || i.cleaningRequired) ? Number(i.cleaningFee || 0) : 0, deposit: Number(i.deposit || 0),
       shippingFee: k === 0 ? q.shippingFee : 0, serviceFee: k === 0 ? q.serviceFee : 0, creditUsed: k === 0 ? q.creditUsed : 0,
       status: instant ? "confirmee" : "demandee", createdAt: now
-    });
+    };
   });
-  db.creditUsed = round((db.creditUsed || 0) + q.creditUsed);
+  db.reservations.push(...rows);
+  rows.forEach((r) => db.busy.push({ itemId: r.itemId, thread: mainId, start, end, handover }));
   const n = itemIds.length;
-  db.messages[mainId] = [{ from: "system", text: instant
-    ? `Réservation confirmée${n > 1 ? ` (${n} pièces, un seul colis)` : ""}.`
-    : `Demande envoyée${n > 1 ? ` pour ${n} pièces` : ""}. La loueuse a 24 h pour répondre ; tu ne paies qu'une fois acceptée.`, at: now }];
-  save();
+  const sys = instant ? `Réservation confirmée${n > 1 ? ` (${n} pièces, un seul colis)` : ""}.`
+    : `Demande envoyée${n > 1 ? ` pour ${n} pièces` : ""}. La loueuse a 24 h pour répondre ; tu ne paies qu'une fois acceptée.`;
+  db.messages[mainId] = [{ from: "system", text: sys, at: now }];
+  write(async () => {
+    let res = await sb.from("reservations").insert(rows.map(fromRes));
+    if (res.error) return res;
+    if (instant) { res = await sb.from("reservations").update({ status: "confirmee" }).eq("thread_id", mainId); if (res.error) return res; }
+    return sb.from("messages").insert({ thread_id: mainId, sender_id: null, body: sys });
+  }, "La réservation n'a pas pu être enregistrée.");
   return { reservation: reservation(mainId) };
 }
 
-// Transitions autorisées : qui peut faire quoi, à quelle étape (appliquées à tout le colis)
 export const TRANSITIONS = {
   demandee: [{ to: "confirmee", by: "owner", label: "Accepter" }, { to: "refusee", by: "owner", label: "Refuser", ghost: true }, { to: "annulee", by: "renter", label: "Annuler la demande", ghost: true }],
   confirmee: [{ to: "remise", by: "both", label: "Vêtement remis (état des lieux fait)" }, { to: "annulee", by: "renter", label: "Annuler", ghost: true }],
@@ -211,8 +361,8 @@ export const TRANSITIONS = {
   litige: [{ to: "terminee", by: "owner", label: "Litige réglé" }]
 };
 const SYSTEM_TEXT = {
-  confirmee: "Réservation acceptée. Paiement effectué, caution prélevée.",
-  refusee: "Demande refusée. Aucun montant n'a été prélevé.",
+  confirmee: "Réservation acceptée.",
+  refusee: "Demande refusée.",
   annulee: "Réservation annulée.",
   remise: "Vêtement remis. État des lieux enregistré.",
   rendue: "Vêtement rendu. La loueuse vérifie l'état.",
@@ -222,14 +372,36 @@ const SYSTEM_TEXT = {
 export function transition(rid, to) {
   const r = reservation(rid);
   group(r).forEach((x) => { x.status = to; });
-  if (["refusee", "annulee"].includes(to) && r.creditUsed) db.creditUsed = Math.max(0, round(db.creditUsed - r.creditUsed));
-  (db.messages[r.thread] = db.messages[r.thread] || []).push({ from: "system", text: SYSTEM_TEXT[to], at: new Date().toISOString() });
-  save();
+  if (["refusee", "annulee", "terminee"].includes(to)) db.busy = db.busy.filter((b) => b.thread !== r.thread);
+  const now = new Date().toISOString();
+  (db.messages[r.thread] = db.messages[r.thread] || []).push({ from: "system", text: SYSTEM_TEXT[to], at: now });
+  write(async () => {
+    const res = await sb.from("reservations").update({ status: to }).eq("thread_id", r.thread);
+    if (res.error) return res;
+    return sb.from("messages").insert({ thread_id: r.thread, sender_id: null, body: SYSTEM_TEXT[to] });
+  }, "Changement non enregistré.");
 }
 
 export function sendMessage(rid, text) {
   (db.messages[rid] = db.messages[rid] || []).push({ from: db.me, text, at: new Date().toISOString() });
-  save();
+  write(() => sb.from("messages").insert({ thread_id: rid, sender_id: db.me, body: text }), "Message non envoyé.");
 }
-export function review(rid, rating, text) { reservation(rid).review = { rating, text }; save(); }
-export function updateMe(patch) { Object.assign(me(), patch); save(); }
+
+export function review(rid, rating, text) {
+  const r = reservation(rid);
+  r.review = { rating, text };
+  write(() => sb.from("reviews").insert({ reservation_id: rid, author_id: db.me, target_id: r.ownerId, rating, body: text }), "Avis non enregistré.");
+}
+
+export function updateMe(patch) {
+  const u = me();
+  Object.assign(u, patch);
+  write(async () => {
+    const row = {};
+    if ("name" in patch) row.name = patch.name;
+    for (const k of ["zip", "city", "lat", "lng"]) if (k in patch) row[k] = patch[k];
+    if ("acceptedTerms" in patch) row.accepted_terms_at = patch.acceptedTerms;
+    if (patch.photo && patch.photo.startsWith("data:")) { row.photo_url = await uploadPhoto(patch.photo); u.photo = row.photo_url; }
+    return sb.from("profiles").update(row).eq("id", db.me);
+  }, "Profil non enregistré.");
+}

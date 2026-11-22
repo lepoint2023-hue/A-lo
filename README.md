@@ -1,7 +1,14 @@
-# Aïlo — application de location de tenues (v0.3)
+# Aïlo — application de location de tenues (v0.4)
 
 Application web installable (PWA) pour louer entre particuliers des vêtements d'occasion pour un événement.
 Nom provisoire. Projet NDdigitalconnect.
+
+## Nouveautés v0.4
+
+- **Vrais comptes** (e-mail + mot de passe) et **données partagées** grâce à Supabase (projet `ailo-eu`, Francfort) : pièces, photos, réservations, messages, avis, favoris.
+- Sécurité ligne par ligne (RLS) : chacune ne voit et ne modifie que ce qui la concerne. Schéma : `supabase/schema.sql`.
+- Les données de démonstration et le « mode démo » disparaissent.
+- À faire avant l'ouverture au public : e-mails via un vrai fournisseur (SMTP), paiements Stripe, création des réservations côté serveur (contrôle des prix et des doubles réservations).
 
 ## Nouveautés v0.3
 

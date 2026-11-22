@@ -1,4 +1,4 @@
-// Aïlo — application (v0.3, données de démonstration dans le navigateur)
+// Aïlo — application (v0.4 : comptes et données Supabase)
 import * as S from "./store.js";
 import {
   CATEGORIES, STYLES, COLORS, SIZES, OCCASIONS, CONDITIONS, CONDITION_HINTS, DURATIONS, STATUS,
@@ -42,7 +42,9 @@ const routes = [
 function route(keep) {
   const h = location.hash || "#/";
   let out = null;
-  if (!S.isOnboarded() && h !== "#/cgu") out = onboarding();
+  if (!S.hasSession() && h !== "#/cgu") out = authView();
+  else if (S.isRecovering()) out = recoveryView();
+  else if (!S.isOnboarded() && h !== "#/cgu") out = onboarding();
   else for (const [re, fn] of routes) {
     const m = h.match(re);
     if (m) { out = fn(...m.slice(1)); break; }
@@ -58,6 +60,7 @@ function route(keep) {
 }
 window.addEventListener("hashchange", () => route());
 window.addEventListener("ailo:toast", (e) => toast(e.detail));
+window.addEventListener("ailo:refresh", () => { if (!document.querySelector("input:focus, textarea:focus")) route(true); });
 
 function setTab(tab) {
   tabbar.querySelectorAll("a").forEach((a) => {
@@ -94,7 +97,8 @@ const empty = (title, text, cta = "") => `<div class="empty"><p class="empty-tit
 const statusPill = (s) => `<span class="pill tone-${STATUS[s].tone}">${STATUS[s].label}</span>`;
 const ownerBadge = (u) => u.type === "boutique" ? `<span class="badge">${icon("shop", 12)} Boutique partenaire</span>` : u.type === "pro" ? `<span class="badge">Pro</span>` : "";
 const opts = (list, sel, placeholder) => `<option value="">${placeholder}</option>` + list.map((v) => `<option ${v === sel ? "selected" : ""}>${esc(v)}</option>`).join("");
-const fmtRating = (n) => n.toFixed(1).replace(".", ",");
+const fmtRating = (n) => (n === null || n === undefined ? "—" : n.toFixed(1).replace(".", ","));
+const ratingLine = (u) => (u.reviews ? `★ ${fmtRating(u.rating)} · ${u.reviews} avis` : "Nouveau membre");
 
 // Sélecteur de commune (code postal ou nom, ou position du téléphone)
 function placePicker(current) {
@@ -141,7 +145,7 @@ function onboarding() {
       <label class="toggle"><input type="checkbox" name="terms" required><span>J'accepte les <a href="#/cgu">conditions générales</a> et la politique de confidentialité.</span></label>
       <p id="onb-err" class="err small" role="alert"></p>
       <button class="btn">Commencer</button>
-      <p class="muted small center">Version de démonstration : tes données restent sur cet appareil.</p>
+      <p class="muted small center">Connectée avec ${esc(S.myEmail())} · <button type="button" class="linkbtn" data-action="logout">changer de compte</button></p>
     </form>`,
     mount() {
       mountPlacePicker();
@@ -197,7 +201,7 @@ function resultsHTML() {
   if (ui.groupBy === "profil") keys.sort((a, b) => (S.user(b).type === "boutique") - (S.user(a).type === "boutique"));
   return count + keys.map((k) => {
     const title = ui.groupBy === "profil"
-      ? `<div class="group-owner">${avatar(S.user(k), "sm")}<span>${esc(S.user(k).name)}</span>${ownerBadge(S.user(k))}<span class="muted small">★ ${fmtRating(S.user(k).rating)} · ${esc(S.user(k).city)}, ${kmLabel(dist(k))}</span></div>`
+      ? `<div class="group-owner">${avatar(S.user(k), "sm")}<span>${esc(S.user(k).name)}</span>${ownerBadge(S.user(k))}<span class="muted small">${ratingLine(S.user(k))} · ${esc(S.user(k).city)}${kmLabel(dist(k)) ? ", " + kmLabel(dist(k)) : ""}</span></div>`
       : `<h2 class="h2">${esc(k)} <span class="muted small">${groups.get(k).length}</span></h2>`;
     return `<section class="group">${title}<div class="hscroll">${groups.get(k).map(card).join("")}</div></section>`;
   }).join("");
@@ -302,7 +306,7 @@ function fiche(id) {
         ${i.defects ? `<p class="box warnbox small"><strong>Défauts signalés :</strong> ${esc(i.defects)}</p>` : ""}
         <div class="tags">${i.instant ? `<span class="badge accent">${icon("bolt", 12)} Réservation instantanée</span>` : ""}<span class="badge">${esc(i.category)}</span><span class="badge">${esc(i.style)}</span>${i.occasions.map((x) => `<span class="badge">${esc(x)}</span>`).join("")}</div>
         <div class="box row gap">${avatar(o)}
-          <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">★ ${fmtRating(o.rating)} · ${o.reviews} avis · ${esc(o.city)}, ${kmLabel(dist(o.id))}</div></div>
+          <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">${ratingLine(o)} · ${esc(o.city)}${kmLabel(dist(o.id)) ? ", " + kmLabel(dist(o.id)) : ""}</div></div>
         </div>
         ${i.description ? `<p class="desc">${esc(i.description)}</p>` : ""}
         ${mine ? `<div class="box note">C'est une pièce de ton dressing. <a href="#/dressing/${id}">La modifier</a></div>` : `
@@ -551,7 +555,7 @@ function submitItem(form, id) {
   if (!d.photos.length && !id) toast("Publiée sans photo : ajoute-en vite, c'est ce qui fait louer.");
   const newId = S.saveItem(data);
   ui.draft = null;
-  toast(id ? "Modifications enregistrées" : "Ta pièce est en ligne !");
+  toast(id ? "Enregistrement…" : "Publication en cours…");
   go(`#/item/${newId}`);
 }
 
@@ -625,7 +629,7 @@ function locationDetail(id) {
           <div class="li total"><span>Tu recevras</span><span>${euro(S.groupPayout(r))}</span></div>`}
       </section>
       ${mine.length ? `<div class="stack">${mine.map((a) => `<button class="btn ${a.ghost ? "ghost" : ""}" data-action="transition" data-id="${r.id}" data-to="${a.to}">${a.label}</button>`).join("")}</div>` : ""}
-      ${theirs.length ? `<div class="box demo"><p class="small"><strong>Mode démo</strong> · à faire par ${esc(other.name)} :</p>${theirs.map((a) => `<button class="btn ghost sm" data-action="transition" data-id="${r.id}" data-to="${a.to}">${a.label}</button>`).join("")}</div>` : ""}
+      ${theirs.length ? `<p class="muted small center">En attente de ${esc(other.name)} : ${theirs.map((a) => a.label.toLowerCase()).join(" ou ")}.</p>` : ""}
       ${r.handover === "envoi" ? `<p class="box note small">${amRenter ? `Envoi en point relais : le colis part ${SHIPPING_DAYS} jours avant la remise. Pour le retour, l'étiquette est incluse.` : `Envoi en point relais : dépose le colis ${SHIPPING_DAYS} jours avant le ${fmtShort(r.start)}. L'étiquette est fournie par Aïlo.`}</p>` : ""}
       <a class="btn ghost" href="#/messages/${r.thread}">${icon("chat", 18)} Écrire à ${esc(other.name.split(" ")[0])}</a>
       ${r.status === "terminee" && amRenter && !r.review ? reviewForm() : ""}
@@ -702,7 +706,7 @@ function thread(rid) {
 // ---------------------------------------------------------------- Profil
 function profil() {
   const u = S.me();
-  const received = S.myLendings().filter((r) => r.review);
+  const received = S.receivedReviews();
   const plans = { base: "Base", premium: "Premium", pro: "Pro", partenaire: "Partenaire" };
   return {
     tab: "profil", title: "Mon profil",
@@ -712,9 +716,8 @@ function profil() {
         <span class="pill tone-ok solid">${plans[u.plan]}</span></div>
       <div class="two"><div class="box mini"><span class="muted small">Crédit Aïlo</span><strong class="accent">${euro(S.credit())}</strong></div><div class="box mini"><span class="muted small">Gains prévus</span><strong>${euro(S.earnings())}</strong></div></div>
       <div class="box center rating">
-        <div class="score">${fmtRating(u.rating)}</div><div class="accent" aria-label="Note de ${u.rating} sur 5">★★★★★</div>
-        <div class="muted small">${u.reviews} avis</div>
-        <div class="crit"><div><span class="muted small">Propreté</span><strong>5,0</strong></div><div><span class="muted small">Conformité</span><strong>4,9</strong></div><div><span class="muted small">Ponctualité</span><strong>4,8</strong></div></div>
+        ${u.reviews ? `<div class="score">${fmtRating(u.rating)}</div><div class="accent" aria-label="Note de ${fmtRating(u.rating)} sur 5">${"★".repeat(Math.round(u.rating))}${"☆".repeat(5 - Math.round(u.rating))}</div>
+        <div class="muted small">${u.reviews} avis</div>` : `<div class="muted">Pas encore d'avis</div><div class="muted small">Ils apparaîtront après tes premières locations.</div>`}
       </div>
       ${received.map((r) => `<div class="box"><div class="row between small"><strong>${esc(S.user(r.renterId).name)}</strong><span class="muted">${"★".repeat(r.review.rating)}</span></div><p>${esc(r.review.text)}</p></div>`).join("")}
       <nav class="box list menu" aria-label="Mon compte">
@@ -724,9 +727,9 @@ function profil() {
         <button data-action="plans"><span>Mon abonnement</span><span class="muted">${plans[u.plan]} ${icon("chevron", 16)}</span></button>
         <button data-action="verify"><span>Vérifier mon identité</span><span class="muted">${u.verified ? "Fait" : "À faire"} ${icon("chevron", 16)}</span></button>
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
-        <button data-action="reset"><span>Réinitialiser la démo</span><span class="muted">${icon("chevron", 16)}</span></button>
+        <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
-      <p class="muted small center">Aïlo v0.3 · démonstration : données sur cet appareil, aucun paiement réel. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+      <p class="muted small center">Aïlo v0.4 · ${esc(S.myEmail())} · version de test : aucun paiement réel. Localisation : bpost, © contributeurs OpenStreetMap.</p>
     </div>
     <dialog id="sheet" class="sheet"></dialog>`
   };
@@ -901,7 +904,14 @@ const actions = {
   verify() {
     openSheet(`<h2 class="h2">Vérifier mon identité</h2><p class="small">La vérification se fera avec Stripe, le prestataire de paiement : une photo de ta carte d'identité et un selfie. Elle sera demandée avant ta première location et avant de recevoir tes premiers gains.</p><p class="muted small">Pas encore active dans cette version de démonstration.</p>`);
   },
-  reset() { if (confirm("Remettre les données de démonstration ? Tes ajouts seront effacés.")) { S.resetDemo(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); toast("Démo réinitialisée"); go("#/"); route(); } }
+  async logout() { await S.signOut(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); ui.place = null; go("#/"); route(); },
+  "auth-mode"(el) { ui.authMode = el.dataset.m; route(true); },
+  async "forgot"() {
+    const email = (document.getElementById("auth-email") || {}).value || "";
+    if (!/.+@.+\..+/.test(email)) { toast("Tape d'abord ton adresse e-mail."); return; }
+    const r = await S.resetPassword(email.trim());
+    toast(r.error || "E-mail envoyé : suis le lien pour choisir un nouveau mot de passe.");
+  }
 };
 
 document.addEventListener("click", (e) => {
@@ -965,8 +975,73 @@ function applyAI(a) {
   return n;
 }
 
+// ---------------------------------------------------------------- Connexion
+function authView() {
+  const signup = ui.authMode !== "login";
+  return {
+    noTabbar: true, title: signup ? "Créer un compte" : "Connexion",
+    html: `<form id="auth" class="page onb" novalidate>
+      <div class="logo big-logo">Aïlo</div>
+      <h1 class="h1">Loue la tenue de ton prochain événement, ou loue ton dressing.</h1>
+      <div class="seg" role="group" aria-label="Compte"><button type="button" data-action="auth-mode" data-m="signup" aria-pressed="${signup}">Créer un compte</button><button type="button" data-action="auth-mode" data-m="login" aria-pressed="${!signup}">Me connecter</button></div>
+      <label class="field"><span>Adresse e-mail</span><input id="auth-email" name="email" type="email" autocomplete="email" inputmode="email" required></label>
+      <label class="field"><span>Mot de passe${signup ? " (8 caractères minimum)" : ""}</span><input name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="8" required></label>
+      <p id="auth-err" class="err small" role="alert"></p>
+      <button class="btn">${signup ? "Créer mon compte" : "Me connecter"}</button>
+      ${signup ? "" : `<button type="button" class="linkbtn" data-action="forgot">Mot de passe oublié ?</button>`}
+      <p class="muted small center"><a href="#/cgu">Conditions générales et confidentialité</a></p>
+    </form>`,
+    mount() {
+      document.getElementById("auth").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const f = e.target, err = document.getElementById("auth-err"), btn = f.querySelector(".btn");
+        const email = f.email.value.trim(), password = f.password.value;
+        if (!/.+@.+\..+/.test(email)) return (err.textContent = "Adresse e-mail invalide.");
+        if (password.length < 8) return (err.textContent = "Le mot de passe doit faire au moins 8 caractères.");
+        btn.disabled = true; btn.textContent = "Un instant…"; err.textContent = "";
+        const r = signup ? await S.signUp(email, password) : await S.signIn(email, password);
+        btn.disabled = false; btn.textContent = signup ? "Créer mon compte" : "Me connecter";
+        if (r.error) return (err.textContent = r.error);
+        if (r.needConfirm) { err.textContent = ""; toast("Compte créé : confirme ton adresse avec le lien reçu par e-mail, puis connecte-toi."); ui.authMode = "login"; return route(true); }
+        go("#/"); route();
+      });
+    }
+  };
+}
+
+function recoveryView() {
+  return {
+    noTabbar: true, title: "Nouveau mot de passe",
+    html: `<form id="rec" class="page onb" novalidate>
+      <div class="logo big-logo">Aïlo</div>
+      <h1 class="h1">Choisis un nouveau mot de passe</h1>
+      <label class="field"><span>Nouveau mot de passe (8 caractères minimum)</span><input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <p id="rec-err" class="err small" role="alert"></p>
+      <button class="btn">Enregistrer</button>
+    </form>`,
+    mount() {
+      document.getElementById("rec").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const p = e.target.password.value;
+        if (p.length < 8) return (document.getElementById("rec-err").textContent = "8 caractères minimum.");
+        const r = await S.setNewPassword(p);
+        if (r.error) return (document.getElementById("rec-err").textContent = r.error);
+        toast("Mot de passe changé");
+        go("#/"); route();
+      });
+    }
+  };
+}
+
 // ---------------------------------------------------------------- Démarrage
-route();
+view.innerHTML = `<div class="page onb"><div class="logo big-logo">Aïlo</div><p class="muted">Chargement…</p></div>`;
+tabbar.hidden = true;
+S.init().catch(() => {}).finally(() => route());
+
+// Rafraîchit les données en revenant dans l'app, et régulièrement sur les écrans de suivi
+const live = () => /^#\/(messages|location|locations)/.test(location.hash);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.hasSession()) S.sync().then(() => window.dispatchEvent(new Event("ailo:refresh"))).catch(() => {}); });
+setInterval(() => { if (live() && S.hasSession() && document.visibilityState === "visible") S.sync().then(() => window.dispatchEvent(new Event("ailo:refresh"))).catch(() => {}); }, 20000);
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }

@@ -1,7 +1,7 @@
 // Aïlo — service worker : l'app s'ouvre même hors connexion.
 // Change VERSION à chaque mise en ligne pour forcer la mise à jour.
-const VERSION = "ailo-v0.3.1";
-const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/store.js", "js/data.js", "js/ui.js", "js/geo.js", "js/config.js", "data/places.json", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
+const VERSION = "ailo-v0.4.0";
+const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/store.js", "js/data.js", "js/ui.js", "js/geo.js", "js/config.js", "data/places.json", "vendor/supabase-2.119.2.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -12,6 +12,7 @@ self.addEventListener("activate", (e) => {
 // Réseau d'abord (pour toujours avoir la dernière version), cache en secours.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  if (new URL(e.request.url).origin !== location.origin) return; // API Supabase, IA, polices : toujours en direct
   e.respondWith(
     fetch(e.request).then((res) => {
       if (res.ok && new URL(e.request.url).origin === location.origin) {

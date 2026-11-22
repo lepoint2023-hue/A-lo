@@ -206,3 +206,21 @@ create policy "photos suppression" on storage.objects for delete to authenticate
 grant usage on schema public to anon, authenticated;
 grant select on public.items, public.reviews to anon;
 grant select, insert, update, delete on all tables in schema public to authenticated;
+
+-- =====================================================================
+-- v0.4 : messages système et périodes occupées
+-- =====================================================================
+-- Les messages « système » (sender_id vide) peuvent être ajoutés par les participantes du fil
+drop policy if exists "messages envoi" on public.messages;
+create policy "messages envoi" on public.messages for insert to authenticated
+  with check ((sender_id = auth.uid() or sender_id is null) and public.is_thread_member(thread_id));
+
+-- Périodes où une pièce est déjà réservée, sans dire par qui (pour le calendrier de disponibilité)
+create or replace function public.busy_ranges()
+returns table(item_id uuid, thread_id uuid, start_date date, end_date date, handover text)
+language sql stable security definer set search_path = public as $$
+  select item_id, thread_id, start_date, end_date, handover from public.reservations
+  where status in ('demandee','confirmee','remise','rendue');
+$$;
+revoke execute on function public.busy_ranges() from public, anon;
+grant execute on function public.busy_ranges() to authenticated;
