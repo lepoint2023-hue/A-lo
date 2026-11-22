@@ -187,7 +187,12 @@ function activeFilterCount() {
 
 function resultsHTML() {
   const items = S.catalog(ui.filters);
-  if (!items.length) return empty("Aucune pièce trouvée", "Élargis le rayon ou les filtres.", `<button class="btn ghost" data-action="clear-filters">Effacer les filtres</button>`);
+  if (!items.length) {
+    const mine = S.myItems().filter((i) => i.status === "online").length;
+    return empty("Aucune pièce trouvée", mine
+      ? `Tes propres pièces n'apparaissent pas ici : retrouve-les dans <a href="#/dressing">Mon dressing</a>. Les autres membres les voient dans leur fil.`
+      : "Élargis le rayon ou les filtres.", `<button class="btn ghost" data-action="clear-filters">Effacer les filtres</button>`);
+  }
   const near = items.filter((i) => !far(i)).length;
   const count = `<p class="muted small count">${items.length} pièce${items.length > 1 ? "s" : ""}${items.length - near ? ` · dont ${items.length - near} plus loin, avec envoi` : ""}</p>`;
   if (ui.groupBy === "tout") return count + grid(items);
