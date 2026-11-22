@@ -8,3 +8,9 @@ export const AI_ENDPOINT = "https://ailo-ai.lepoint2023.workers.dev/analyse";
 export function aiEndpoint() {
   try { return localStorage.getItem("ailo-ai-endpoint") || AI_ENDPOINT; } catch (e) { return AI_ENDPOINT; }
 }
+
+// Supabase (comptes, données, photos) — projet « ailo ».
+// La clé « publishable » est faite pour être publique : la sécurité repose sur les règles RLS de la base.
+// (Ne jamais mettre ici la clé « secret ».)
+export const SUPABASE_URL = "https://rwzjkaryucnldgrigbcs.supabase.co";
+export const SUPABASE_KEY = "sb_publishable_u6_CLXVzV7TaRZBaFfaUfA_mqJSADL5";
