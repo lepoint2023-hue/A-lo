@@ -906,6 +906,15 @@ const actions = {
   },
   async logout() { await S.signOut(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); ui.place = null; go("#/"); route(); },
   "auth-mode"(el) { ui.authMode = el.dataset.m; route(true); },
+  "toggle-pw"(el) {
+    const input = el.parentElement.querySelector("input");
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    el.setAttribute("aria-pressed", show);
+    el.setAttribute("aria-label", show ? "Masquer le mot de passe" : "Afficher le mot de passe");
+    el.innerHTML = eyeSvg(show);
+    input.focus();
+  },
   async "forgot"() {
     const email = (document.getElementById("auth-email") || {}).value || "";
     if (!/.+@.+\..+/.test(email)) { toast("Tape d'abord ton adresse e-mail."); return; }
@@ -976,6 +985,16 @@ function applyAI(a) {
 }
 
 // ---------------------------------------------------------------- Connexion
+// Champ mot de passe avec un œil pour afficher ce qu'on tape
+const EYE = '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
+const EYE_OFF = '<path d="M3 3l18 18M10.6 6.1A10.6 10.6 0 0 1 12 6c6.4 0 10 6 10 6a17.6 17.6 0 0 1-3.3 4M6.6 6.6C3.7 8.4 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
+const eyeSvg = (on) => `<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${on ? EYE_OFF : EYE}</svg>`;
+function pwField(name, label, autocomplete) {
+  return `<label class="field"><span>${label}</span><span class="pw">
+    <input name="${name}" type="password" autocomplete="${autocomplete}" minlength="8" required autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button type="button" class="pw-eye" data-action="toggle-pw" aria-label="Afficher le mot de passe" aria-pressed="false">${eyeSvg(false)}</button></span></label>`;
+}
+
 function authView() {
   const signup = ui.authMode !== "login";
   return {
@@ -985,7 +1004,7 @@ function authView() {
       <h1 class="h1">Loue la tenue de ton prochain événement, ou loue ton dressing.</h1>
       <div class="seg" role="group" aria-label="Compte"><button type="button" data-action="auth-mode" data-m="signup" aria-pressed="${signup}">Créer un compte</button><button type="button" data-action="auth-mode" data-m="login" aria-pressed="${!signup}">Me connecter</button></div>
       <label class="field"><span>Adresse e-mail</span><input id="auth-email" name="email" type="email" autocomplete="email" inputmode="email" required></label>
-      <label class="field"><span>Mot de passe${signup ? " (8 caractères minimum)" : ""}</span><input name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="8" required></label>
+      ${pwField("password", "Mot de passe" + (signup ? " (8 caractères minimum)" : ""), signup ? "new-password" : "current-password")}
       <p id="auth-err" class="err small" role="alert"></p>
       <button class="btn">${signup ? "Créer mon compte" : "Me connecter"}</button>
       ${signup ? "" : `<button type="button" class="linkbtn" data-action="forgot">Mot de passe oublié ?</button>`}
@@ -1015,7 +1034,7 @@ function recoveryView() {
     html: `<form id="rec" class="page onb" novalidate>
       <div class="logo big-logo">Aïlo</div>
       <h1 class="h1">Choisis un nouveau mot de passe</h1>
-      <label class="field"><span>Nouveau mot de passe (8 caractères minimum)</span><input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      ${pwField("password", "Nouveau mot de passe (8 caractères minimum)", "new-password")}
       <p id="rec-err" class="err small" role="alert"></p>
       <button class="btn">Enregistrer</button>
     </form>`,
