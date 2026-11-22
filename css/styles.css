@@ -346,3 +346,14 @@ img.avatar { object-fit: cover; }
 .wedding-kicker { font-size: 12px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--accent); }
 .wedding strong { font-family: var(--serif); font-size: 20px; font-weight: 600; }
 .wedding span:last-child { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ink-2); }
+
+/* ---- v0.4.7 : photos en grand ---- */
+.gallery > .zoom { flex: 0 0 100%; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; scroll-snap-align: start; }
+.gallery > .zoom img { width: 100%; height: 100%; object-fit: cover; }
+.lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(12,12,10,.94); display: flex; align-items: center; justify-content: center; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lb-btn { position: absolute; width: 48px; height: 48px; border-radius: 24px; border: 0; background: rgba(255,255,255,.92); color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.lb-close { top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px; }
+.lb-prev { left: 12px; top: 50%; transform: translateY(-50%); }
+.lb-next { right: 12px; top: 50%; transform: translateY(-50%); }
+.lb-count { position: absolute; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); color: #fff; font-size: 14px; }

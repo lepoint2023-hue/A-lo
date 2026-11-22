@@ -26,16 +26,17 @@ const ui = {
 const routes = [
   [/^#?\/?$/, decouvrir],
   [/^#\/favoris$/, favoris],
-  [/^#\/item\/(\w+)$/, fiche],
+  [/^#\/item\/([\w-]+)$/, fiche],
   [/^#\/dressing$/, dressing],
   [/^#\/dressing\/nouveau$/, () => itemForm()],
-  [/^#\/dressing\/(\w+)$/, (id) => itemForm(id)],
+  [/^#\/dressing\/([\w-]+)$/, (id) => itemForm(id)],
   [/^#\/locations$/, locations],
-  [/^#\/location\/(\w+)$/, locationDetail],
+  [/^#\/location\/([\w-]+)$/, locationDetail],
   [/^#\/messages$/, messagesList],
-  [/^#\/messages\/(\w+)$/, thread],
+  [/^#\/messages\/([\w-]+)$/, thread],
   [/^#\/profil$/, profil],
   [/^#\/profil\/modifier$/, editProfile],
+  [/^#\/membre\/([\w-]+)$/, membre],
   [/^#\/cgu$/, cgu]
 ];
 
@@ -296,7 +297,7 @@ function fiche(id) {
   const fav = S.isFav(id);
   const ranges = S.bookedRanges(id);
   const credit = S.credit();
-  const photos = i.photos.length ? i.photos.map((p, k) => `<img src="${p}" alt="${esc(i.title)}, photo ${k + 1}">`).join("") : photo(i, "big");
+  const photos = i.photos.length ? i.photos.map((p, k) => `<button class="zoom" data-action="zoom" data-k="${k}" aria-label="Agrandir la photo ${k + 1}"><img src="${p}" alt="${esc(i.title)}, photo ${k + 1}"></button>`).join("") : photo(i, "big");
   return {
     noTabbar: true, bottomBar: !mine, title: i.title,
     html: `<div class="hero">
@@ -311,9 +312,9 @@ function fiche(id) {
         <div class="box mini-row"><span><strong>${esc(i.condition)}</strong><span class="muted small block">${esc(CONDITION_HINTS[i.condition] || "")}</span></span></div>
         ${i.defects ? `<p class="box warnbox small"><strong>Défauts signalés :</strong> ${esc(i.defects)}</p>` : ""}
         <div class="tags">${i.instant ? `<span class="badge accent">${icon("bolt", 12)} Réservation instantanée</span>` : ""}<span class="badge">${esc(i.category)}</span><span class="badge">${esc(i.style)}</span>${i.occasions.map((x) => `<span class="badge">${esc(x)}</span>`).join("")}</div>
-        <div class="box row gap">${avatar(o)}
-          <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">${ratingLine(o)} · ${esc(o.city)}${kmLabel(dist(o.id)) ? ", " + kmLabel(dist(o.id)) : ""}</div></div>
-        </div>
+        <a class="box row gap plain" href="#/membre/${o.id}">${avatar(o)}
+          <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">${ratingLine(o)} · ${esc(o.city)}${kmLabel(dist(o.id)) ? ", " + kmLabel(dist(o.id)) : ""}</div></div>${icon("chevron", 16)}
+        </a>
         ${i.description ? `<p class="desc">${esc(i.description)}</p>` : ""}
         ${mine ? `<div class="box note">C'est une pièce de ton dressing. <a href="#/dressing/${id}">La modifier</a></div>` : `
         <section class="stack">
@@ -399,6 +400,26 @@ function updateBooking(id) {
   btn.textContent = itemIds.every((x) => S.item(x).instant) ? "Réserver" : "Demander";
 }
 
+// ---------------------------------------------------------------- Profil d'une loueuse
+function membre(id) {
+  const u = S.user(id);
+  const items = S.catalog({}).filter((i) => i.ownerId === id);
+  const plans = { pro: "Pro", partenaire: "Boutique partenaire" };
+  return {
+    tab: "decouvrir", title: u.name,
+    html: `<div class="page">
+      <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><span class="grow"></span></header>
+      <div class="row gap">${avatar(u, "xl")}
+        <div class="grow"><h1 class="h1 inline">${esc(u.name)}</h1>
+          <div class="muted small">${icon("pin", 13)} ${esc(u.city)}${kmLabel(dist(id)) ? " · " + kmLabel(dist(id)) : ""}${u.verified ? " · identité vérifiée" : ""}</div>
+          <div class="small">${ratingLine(u)}</div></div>
+        ${ownerBadge(u)}</div>
+      <h2 class="h2">Son dressing <span class="muted small">${items.length} pièce${items.length > 1 ? "s" : ""}</span></h2>
+      ${items.length ? grid(items) : empty("Rien à louer pour l'instant", "Repasse plus tard.")}
+    </div>`
+  };
+}
+
 // ---------------------------------------------------------------- Dressing
 function dressing() {
   const items = S.myItems();
@@ -476,6 +497,7 @@ function itemForm(id) {
 
       <section class="stack"><h2 class="h3">3. Durées, prix et caution</h2>
         <div class="box suggest"><label class="field"><span>Prix d'achat (pour suggérer les prix)</span><input type="number" id="buy" min="0" step="1" inputmode="numeric" placeholder="Ex. 150"></label><button type="button" class="btn ghost sm" data-action="suggest">Suggérer</button></div>
+        ${d.aiPriceFrom ? `<p class="box warnbox small">${icon("sparkle", 14)} Prix proposés par l'IA à partir d'un prix neuf estimé à ${euro(d.aiPriceFrom)}. <strong>Vérifie-les</strong> et corrige-les si besoin.</p>` : ""}
         <p class="muted small">Remplis le prix des durées que tu acceptes ; laisse vide les autres. C'est ainsi que tu fixes ta durée minimale et maximale.</p>
         <div class="four">
           ${DURATIONS.map((x) => `<label class="field"><span>${x.label}</span><input type="number" name="p-${x.id}" min="1" step="1" inputmode="numeric" value="${d.prices[x.id] ?? ""}" placeholder="—"></label>`).join("")}
@@ -559,6 +581,7 @@ function submitItem(form, id) {
   if (d.condition === "Bon état" && !d.defects.trim()) return fail("Pour une pièce en « bon état », décris les signes d'usure dans « Défauts ».");
   const data = Object.assign({}, d);
   delete data._for;
+  delete data.aiPriceFrom;
   if (!d.photos.length && !id) toast("Publiée sans photo : ajoute-en vite, c'est ce qui fait louer.");
   const newId = S.saveItem(data);
   ui.draft = null;
@@ -855,6 +878,8 @@ const actions = {
       if (a.estimatedValue && !DURATIONS.some((x) => Number(ui.draft.prices[x.id]) > 0)) {
         document.getElementById("buy").value = Math.round(a.estimatedValue);
         actions.suggest(null, true);
+        ui.draft.aiPriceFrom = Math.round(a.estimatedValue);
+        route(true);
       }
       toast(n ? "Fiche pré-remplie : vérifie et corrige avant de publier." : "L'IA n'a rien trouvé de sûr : remplis à la main.");
     } catch (e) {
@@ -913,6 +938,36 @@ const actions = {
   },
   async logout() { await S.signOut(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); ui.place = null; go("#/"); route(); },
   "auth-mode"(el) { ui.authMode = el.dataset.m; route(true); },
+  zoom(el) {
+    const i = S.item(location.hash.split("/")[2]);
+    if (!i || !i.photos.length) return;
+    let k = Number(el.dataset.k) || 0;
+    const box = document.createElement("div");
+    box.className = "lightbox";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", "Photos en grand");
+    const show = () => {
+      box.innerHTML = `<img src="${i.photos[k]}" alt="${esc(i.title)}, photo ${k + 1}">
+        <button class="lb-btn lb-close" aria-label="Fermer">${icon("close", 22)}</button>
+        ${i.photos.length > 1 ? `<button class="lb-btn lb-prev" aria-label="Photo précédente">${icon("back", 22)}</button><button class="lb-btn lb-next" aria-label="Photo suivante">${icon("chevron", 22)}</button><span class="lb-count">${k + 1} / ${i.photos.length}</span>` : ""}`;
+    };
+    show();
+    box.addEventListener("click", (e) => {
+      if (e.target.closest(".lb-prev")) { k = (k - 1 + i.photos.length) % i.photos.length; show(); }
+      else if (e.target.closest(".lb-next")) { k = (k + 1) % i.photos.length; show(); }
+      else if (e.target.closest(".lb-close") || e.target === box) box.remove();
+    });
+    let x0 = null;
+    box.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+    box.addEventListener("touchend", (e) => {
+      if (x0 === null || i.photos.length < 2) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 40) { k = (k + (dx < 0 ? 1 : -1) + i.photos.length) % i.photos.length; show(); }
+      x0 = null;
+    });
+    document.body.appendChild(box);
+    box.querySelector(".lb-close").focus();
+  },
   "toggle-pw"(el) {
     const input = el.parentElement.querySelector("input");
     const show = input.type === "password";
