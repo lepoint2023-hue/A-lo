@@ -76,6 +76,7 @@ const authMsg = (e) => {
   if (/already registered|already exists/i.test(m)) return "Un compte existe déjà avec cet e-mail : connecte-toi.";
   if (/password/i.test(m) && /(6|8|short|weak)/i.test(m)) return "Mot de passe trop faible : 8 caractères minimum.";
   if (/email.*not confirmed/i.test(m)) return "Confirme d'abord ton e-mail (lien reçu par e-mail).";
+  if (/email rate limit|over_email_send_rate_limit/i.test(m + (e && e.code || ""))) return "Le service d'e-mails d'inscription est saturé pour le moment (version de test). Réessaie dans une heure.";
   if (/rate limit|too many/i.test(m)) return "Trop de tentatives : réessaie dans quelques minutes.";
   return m || "Une erreur est survenue.";
 };
