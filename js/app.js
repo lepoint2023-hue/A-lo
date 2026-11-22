@@ -1,0 +1,972 @@
+// Aïlo — application (v0.3, données de démonstration dans le navigateur)
+import * as S from "./store.js";
+import {
+  CATEGORIES, STYLES, COLORS, SIZES, OCCASIONS, CONDITIONS, CONDITION_HINTS, DURATIONS, STATUS,
+  COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, SHIPPING_DAYS, DEFAULT_RADIUS, addDays
+} from "./data.js";
+import { esc, euro, fmtDate, fmtShort, today, initials, avatar, icon, photo, toast, resizeImage, calendar } from "./ui.js";
+import { searchPlaces, nearestPlace, currentPosition, kmLabel } from "./geo.js";
+import { aiEndpoint } from "./config.js";
+
+const view = document.getElementById("view");
+const tabbar = document.getElementById("tabbar");
+
+const freshFilters = () => ({ q: "", category: "", style: "", color: "", size: "", brand: "", condition: "", handover: "", occasion: "", maxPrice: "", radius: DEFAULT_RADIUS, includeShipping: true, date: "", sort: "km" });
+const ui = {
+  filters: freshFilters(),
+  groupBy: "tout",
+  locTab: "prends",
+  dressFilter: "",
+  booking: {},   // itemId -> { durationId, start, cleaning, handover, extras: [], useCredit }
+  draft: null,   // pièce en cours d'édition
+  place: null    // commune choisie dans un sélecteur
+};
+
+// ---------------------------------------------------------------- Routeur
+const routes = [
+  [/^#?\/?$/, decouvrir],
+  [/^#\/favoris$/, favoris],
+  [/^#\/item\/(\w+)$/, fiche],
+  [/^#\/dressing$/, dressing],
+  [/^#\/dressing\/nouveau$/, () => itemForm()],
+  [/^#\/dressing\/(\w+)$/, (id) => itemForm(id)],
+  [/^#\/locations$/, locations],
+  [/^#\/location\/(\w+)$/, locationDetail],
+  [/^#\/messages$/, messagesList],
+  [/^#\/messages\/(\w+)$/, thread],
+  [/^#\/profil$/, profil],
+  [/^#\/profil\/modifier$/, editProfile],
+  [/^#\/cgu$/, cgu]
+];
+
+function route(keep) {
+  const h = location.hash || "#/";
+  let out = null;
+  if (!S.isOnboarded() && h !== "#/cgu") out = onboarding();
+  else for (const [re, fn] of routes) {
+    const m = h.match(re);
+    if (m) { out = fn(...m.slice(1)); break; }
+  }
+  if (!out) { location.hash = "#/"; return; }
+  view.innerHTML = out.html;
+  tabbar.hidden = !!out.noTabbar;
+  document.body.classList.toggle("has-bottombar", !!out.bottomBar);
+  setTab(out.tab);
+  if (out.mount) out.mount();
+  if (!keep) window.scrollTo(0, 0);
+  document.title = out.title ? `${out.title} · Aïlo` : "Aïlo";
+}
+window.addEventListener("hashchange", () => route());
+window.addEventListener("ailo:toast", (e) => toast(e.detail));
+
+function setTab(tab) {
+  tabbar.querySelectorAll("a").forEach((a) => {
+    const on = a.dataset.tab === tab;
+    a.classList.toggle("on", on);
+    if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+  tabbar.querySelector("[data-tab=locations] .dot").hidden = !S.myLendings().some((r) => r.status === "demandee");
+}
+
+const go = (h) => { location.hash = h; };
+const back = (fallback) => (history.length > 1 ? history.back() : go(fallback));
+
+// ---------------------------------------------------------------- Composants
+const dist = (userId) => S.distanceTo(userId);
+const far = (i) => (dist(i.ownerId) ?? 0) > Number(ui.filters.radius || 9999);
+
+function card(i) {
+  const owner = S.user(i.ownerId);
+  const fav = S.isFav(i.id);
+  return `<article class="card">
+    <a href="#/item/${i.id}" class="card-link">
+      <div class="card-ph">${photo(i)}${i.instant ? `<span class="tag-instant">${icon("bolt", 12)} Instantané</span>` : ""}${far(i) ? `<span class="tag-ship">${icon("box", 12)} Envoi</span>` : ""}</div>
+      <h3>${esc(i.title)}</h3>
+      <p class="muted small">T. ${esc(i.size)} · ${esc(owner.city)} · ${kmLabel(dist(i.ownerId))}</p>
+      <p class="price"><span class="muted">dès </span><strong>${euro(S.minPrice(i))}</strong></p>
+    </a>
+    <button class="fav ${fav ? "on" : ""}" data-action="fav" data-id="${i.id}" aria-label="${fav ? "Retirer des" : "Ajouter aux"} favoris" aria-pressed="${fav}">${icon(fav ? "heart-fill" : "heart", 16)}</button>
+  </article>`;
+}
+
+const grid = (items) => `<div class="grid2">${items.map(card).join("")}</div>`;
+const empty = (title, text, cta = "") => `<div class="empty"><p class="empty-title">${title}</p><p class="muted">${text}</p>${cta}</div>`;
+const statusPill = (s) => `<span class="pill tone-${STATUS[s].tone}">${STATUS[s].label}</span>`;
+const ownerBadge = (u) => u.type === "boutique" ? `<span class="badge">${icon("shop", 12)} Boutique partenaire</span>` : u.type === "pro" ? `<span class="badge">Pro</span>` : "";
+const opts = (list, sel, placeholder) => `<option value="">${placeholder}</option>` + list.map((v) => `<option ${v === sel ? "selected" : ""}>${esc(v)}</option>`).join("");
+const fmtRating = (n) => n.toFixed(1).replace(".", ",");
+
+// Sélecteur de commune (code postal ou nom, ou position du téléphone)
+function placePicker(current) {
+  return `<div class="place-picker">
+    <label class="field"><span>Ta commune *</span>
+      <input id="place-q" type="text" inputmode="search" autocomplete="off" placeholder="Code postal ou commune, ex. 6680" value="${current ? esc(current.zip + " " + current.city) : ""}"></label>
+    <div id="place-results" class="place-results" role="listbox" aria-label="Communes"></div>
+    <button type="button" class="btn ghost sm" data-action="geo-me">${icon("locate", 18)} Utiliser ma position</button>
+    <p class="muted small">Seule ta commune est visible, jamais ton adresse. Les distances sont approximatives.</p>
+  </div>`;
+}
+function mountPlacePicker() {
+  const q = document.getElementById("place-q"), box = document.getElementById("place-results");
+  let t;
+  q.addEventListener("input", () => {
+    ui.place = null;
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const list = await searchPlaces(q.value);
+      box.innerHTML = list.map((p) => `<button type="button" role="option" data-action="pick-place" data-zip="${p.zip}" data-city="${esc(p.city)}" data-lat="${p.lat}" data-lng="${p.lng}">${p.zip} ${esc(p.city)}</button>`).join("");
+    }, 150);
+  });
+}
+function setPlace(p) {
+  ui.place = { zip: p.zip, city: p.city, lat: Number(p.lat), lng: Number(p.lng) };
+  const q = document.getElementById("place-q");
+  if (q) q.value = `${p.zip} ${p.city}`;
+  const box = document.getElementById("place-results");
+  if (box) box.innerHTML = "";
+}
+
+// ---------------------------------------------------------------- Bienvenue
+function onboarding() {
+  const u = S.me();
+  if (!ui.place && u.zip && u.name) ui.place = { zip: u.zip, city: u.city, lat: u.lat, lng: u.lng };
+  return {
+    noTabbar: true, title: "Bienvenue",
+    html: `<form id="onb" class="page onb" novalidate>
+      <div class="logo big-logo">Aïlo</div>
+      <h1 class="h1">Loue la tenue de ton prochain événement, ou loue ton dressing.</h1>
+      <p class="muted">Deux informations pour commencer : elles servent à te montrer les pièces près de chez toi.</p>
+      <label class="field"><span>Ton prénom *</span><input name="name" maxlength="30" autocomplete="given-name" value="${esc(u.name)}" required></label>
+      ${placePicker(ui.place)}
+      <label class="toggle"><input type="checkbox" name="terms" required><span>J'accepte les <a href="#/cgu">conditions générales</a> et la politique de confidentialité.</span></label>
+      <p id="onb-err" class="err small" role="alert"></p>
+      <button class="btn">Commencer</button>
+      <p class="muted small center">Version de démonstration : tes données restent sur cet appareil.</p>
+    </form>`,
+    mount() {
+      mountPlacePicker();
+      document.getElementById("onb").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const f = e.target, err = document.getElementById("onb-err");
+        const name = f.name.value.trim();
+        if (!name) return (err.textContent = "Indique ton prénom.");
+        if (!ui.place) return (err.textContent = "Choisis ta commune dans la liste, ou utilise ta position.");
+        if (!f.terms.checked) return (err.textContent = "Accepte les conditions générales pour continuer.");
+        S.updateMe(Object.assign({ name: name.charAt(0).toUpperCase() + name.slice(1), acceptedTerms: new Date().toISOString() }, ui.place));
+        ui.place = null;
+        toast(`Bienvenue ${S.me().name} !`);
+        go("#/"); route();
+      });
+    }
+  };
+}
+
+function cgu() {
+  return {
+    noTabbar: !S.isOnboarded(), title: "Conditions générales",
+    html: `<div class="page prose">
+      <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><h1 class="h1 inline">Conditions générales</h1><span></span></header>
+      <p class="box note small">Brouillon de travail : ces conditions doivent être rédigées et validées par un juriste avant l'ouverture au public.</p>
+      <h2 class="h3">Le rôle d'Aïlo</h2><p>Aïlo met en relation des particuliers et des professionnelles qui louent des vêtements avec des personnes qui en ont besoin. Aïlo n'est ni propriétaire ni vendeur des pièces.</p>
+      <h2 class="h3">Paiement, caution, frais</h2><p>La locataire paie la location, les frais de service (${euro(SERVICE_FEE.fixed)} + ${SERVICE_FEE.rate * 100} % de la location), l'éventuel forfait nettoyage et, en cas d'envoi, un forfait aller-retour de ${euro(SHIPPING_FEE)}. Une caution est bloquée puis remboursée après le retour contrôlé. Aïlo prélève ${COMMISSION_RATE * 100} % sur la part de la loueuse.</p>
+      <h2 class="h3">Remise et retour</h2><p>Un état des lieux photo est fait à la remise et au retour. En cas de dommage, Aïlo compare les photos ; la retenue ne dépasse jamais la caution.</p>
+      <h2 class="h3">Données personnelles</h2><p>Aïlo conserve ton prénom, ta commune, tes annonces, tes réservations et tes messages. Ton adresse exacte n'est jamais affichée. Tu peux supprimer ton compte à tout moment.</p>
+    </div>`
+  };
+}
+
+// ---------------------------------------------------------------- Découvrir
+function activeFilterCount() {
+  const f = ui.filters;
+  return ["category", "style", "color", "size", "brand", "condition", "handover", "maxPrice", "date"].filter((k) => f[k]).length + (Number(f.radius) !== DEFAULT_RADIUS ? 1 : 0);
+}
+
+function resultsHTML() {
+  const items = S.catalog(ui.filters);
+  if (!items.length) return empty("Aucune pièce trouvée", "Élargis le rayon ou les filtres.", `<button class="btn ghost" data-action="clear-filters">Effacer les filtres</button>`);
+  const near = items.filter((i) => !far(i)).length;
+  const count = `<p class="muted small count">${items.length} pièce${items.length > 1 ? "s" : ""}${items.length - near ? ` · dont ${items.length - near} plus loin, avec envoi` : ""}</p>`;
+  if (ui.groupBy === "tout") return count + grid(items);
+  const groups = new Map();
+  for (const i of items) {
+    const keys = ui.groupBy === "categorie" ? [i.category] : ui.groupBy === "theme" ? i.occasions : [i.ownerId];
+    for (const k of keys) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
+  }
+  let keys = [...groups.keys()];
+  if (ui.groupBy === "theme") keys = OCCASIONS.filter((o) => groups.has(o));
+  if (ui.groupBy === "profil") keys.sort((a, b) => (S.user(b).type === "boutique") - (S.user(a).type === "boutique"));
+  return count + keys.map((k) => {
+    const title = ui.groupBy === "profil"
+      ? `<div class="group-owner">${avatar(S.user(k), "sm")}<span>${esc(S.user(k).name)}</span>${ownerBadge(S.user(k))}<span class="muted small">★ ${fmtRating(S.user(k).rating)} · ${esc(S.user(k).city)}, ${kmLabel(dist(k))}</span></div>`
+      : `<h2 class="h2">${esc(k)} <span class="muted small">${groups.get(k).length}</span></h2>`;
+    return `<section class="group">${title}<div class="hscroll">${groups.get(k).map(card).join("")}</div></section>`;
+  }).join("");
+}
+
+function decouvrir() {
+  const f = ui.filters, n = activeFilterCount(), u = S.me();
+  const seg = [["tout", "Tout"], ["categorie", "Catégorie"], ["theme", "Thématique"], ["profil", "Profil"]];
+  return {
+    tab: "decouvrir",
+    html: `<div class="page">
+      <header class="topbar"><div class="logo">Aïlo</div>
+        <a class="icon-btn" href="#/favoris" aria-label="Mes favoris">${icon("heart", 20)}</a></header>
+      <p class="muted">Bonjour ${esc(u.name)}</p>
+      <h1 class="h1">Quelle tenue pour ton prochain événement ?</h1>
+      <div class="searchrow">
+        <label class="search">${icon("search", 18)}<span class="sr">Rechercher</span>
+          <input id="q" type="search" placeholder="Robe, marque, taille 38…" value="${esc(f.q)}" autocomplete="off"></label>
+        <button class="icon-btn solid" data-action="open-filters" aria-label="Filtres">${icon("filter", 20)}${n ? `<span class="count-badge">${n}</span>` : ""}</button>
+      </div>
+      <button class="where" data-action="open-filters">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>
+      <div class="label-caps">Afficher par</div>
+      <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
+      <div class="chips">${OCCASIONS.map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o}</button>`).join("")}</div>
+      <div class="section-head"><h2 class="h2">${f.occasion ? `Occasion : ${esc(f.occasion)}` : "Près de chez toi"}</h2></div>
+      <div id="results">${resultsHTML()}</div>
+    </div>
+    ${filtersSheet()}`,
+    mount() {
+      const q = document.getElementById("q");
+      q.addEventListener("input", () => { ui.filters.q = q.value; document.getElementById("results").innerHTML = resultsHTML(); });
+    }
+  };
+}
+
+function filtersSheet() {
+  const f = ui.filters, u = S.me();
+  const r = Number(f.radius) || 100;
+  return `<dialog id="filters" class="sheet" aria-labelledby="filters-title">
+    <form method="dialog" id="filters-form">
+      <div class="sheet-head"><h2 id="filters-title" class="h2">Filtres</h2><button class="icon-btn" value="cancel" aria-label="Fermer">${icon("close", 20)}</button></div>
+      <div class="fields">
+        <div class="box mini-row"><span>${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong></span><a href="#/profil/modifier">Changer</a></div>
+        <label class="field"><span>Rayon : <output id="rv">${r >= 100 ? "partout" : r + " km"}</output></span><input type="range" name="radius" min="5" max="100" step="5" value="${r}"></label>
+        <label class="toggle"><input type="checkbox" name="includeShipping" ${f.includeShipping ? "checked" : ""}><span>Montrer aussi les pièces plus loin qui peuvent être envoyées</span></label>
+        <label class="field"><span>Catégorie</span><select name="category">${opts(CATEGORIES, f.category, "Toutes")}</select></label>
+        <label class="field"><span>Style</span><select name="style">${opts(STYLES, f.style, "Tous")}</select></label>
+        <fieldset class="field"><legend>Couleur</legend><div class="swatches">
+          <label class="sw"><input type="radio" name="color" value="" ${!f.color ? "checked" : ""}><span class="sw-any">Toutes</span></label>
+          ${COLORS.map((c) => `<label class="sw" title="${c.name}"><input type="radio" name="color" value="${c.name}" ${f.color === c.name ? "checked" : ""}><span style="background:${c.hex}"></span><span class="sr">${c.name}</span></label>`).join("")}
+        </div></fieldset>
+        <label class="field"><span>Taille</span><select name="size">${opts(SIZES, f.size, "Toutes")}</select></label>
+        <label class="field"><span>Marque</span><select name="brand">${opts(S.brands(), f.brand, "Toutes")}</select></label>
+        <label class="field"><span>État</span><select name="condition">${opts(CONDITIONS, f.condition, "Tous")}</select></label>
+        <label class="field"><span>Remise</span><select name="handover"><option value="">Main propre ou envoi</option><option value="main" ${f.handover === "main" ? "selected" : ""}>Main propre possible</option><option value="envoi" ${f.handover === "envoi" ? "selected" : ""}>Envoi possible</option></select></label>
+        <label class="field"><span>Disponible à partir du</span><input type="date" name="date" min="${today()}" value="${f.date}"></label>
+        <label class="field"><span>Prix de départ max : <output id="pv">${f.maxPrice ? euro(f.maxPrice) : "sans limite"}</output></span><input type="range" name="maxPrice" min="5" max="50" step="5" value="${f.maxPrice || 50}"></label>
+        <label class="field"><span>Trier par</span><select name="sort"><option value="km" ${f.sort === "km" ? "selected" : ""}>Proximité</option><option value="price" ${f.sort === "price" ? "selected" : ""}>Prix</option><option value="new" ${f.sort === "new" ? "selected" : ""}>Nouveautés</option></select></label>
+      </div>
+      <div class="sheet-actions"><button type="button" class="btn ghost" data-action="clear-filters">Réinitialiser</button><button class="btn" value="apply">Voir les résultats</button></div>
+    </form>
+  </dialog>`;
+}
+
+// ---------------------------------------------------------------- Favoris
+function favoris() {
+  const items = S.favorites();
+  return {
+    tab: "decouvrir", title: "Favoris",
+    html: `<div class="page"><header class="topbar"><a class="icon-btn" href="#/" aria-label="Retour">${icon("back", 20)}</a><h1 class="h1 inline">Mes favoris</h1><span></span></header>
+      ${items.length ? grid(items) : empty("Pas encore de favoris", "Touche le cœur d'une pièce pour la retrouver ici.")}</div>`
+  };
+}
+
+// ---------------------------------------------------------------- Fiche vêtement
+function fiche(id) {
+  const i = S.item(id);
+  if (!i) return { html: empty("Pièce introuvable", "Elle a peut-être été retirée.", `<a class="btn" href="#/">Retour</a>`) };
+  const o = S.user(i.ownerId), mine = i.ownerId === S.me().id;
+  const durs = S.offeredDurations(i);
+  const b = ui.booking[id] || (ui.booking[id] = {
+    durationId: (durs.find((d) => d.id === "sem") || durs[0]).id, start: "", extras: [], useCredit: false,
+    cleaning: i.cleaningRequired ? "forfait" : "propre",
+    handover: i.handover === "envoi" || (i.handover === "both" && far(i)) ? "envoi" : "main"
+  });
+  const fav = S.isFav(id);
+  const ranges = S.bookedRanges(id);
+  const credit = S.credit();
+  const photos = i.photos.length ? i.photos.map((p, k) => `<img src="${p}" alt="${esc(i.title)}, photo ${k + 1}">`).join("") : photo(i, "big");
+  return {
+    noTabbar: true, bottomBar: !mine, title: i.title,
+    html: `<div class="hero">
+        <div class="gallery">${photos}</div>
+        <button class="icon-btn float left" data-action="back" aria-label="Retour">${icon("back", 20)}</button>
+        ${mine ? "" : `<button class="icon-btn float right fav-big ${fav ? "on" : ""}" data-action="fav" data-id="${id}" aria-label="${fav ? "Retirer des" : "Ajouter aux"} favoris" aria-pressed="${fav}">${icon(fav ? "heart-fill" : "heart", 20)}</button>`}
+        ${i.photos.length > 1 ? `<div class="dots">${i.photos.map(() => "<span></span>").join("")}</div>` : ""}
+      </div>
+      <div class="page">
+        <div><h1 class="h1">${esc(i.title)}</h1>
+          <p class="muted">Taille ${esc(i.size)} · ${esc(i.color)}${i.brand ? " · " + esc(i.brand) : ""}</p></div>
+        <div class="box mini-row"><span><strong>${esc(i.condition)}</strong><span class="muted small block">${esc(CONDITION_HINTS[i.condition] || "")}</span></span></div>
+        ${i.defects ? `<p class="box warnbox small"><strong>Défauts signalés :</strong> ${esc(i.defects)}</p>` : ""}
+        <div class="tags">${i.instant ? `<span class="badge accent">${icon("bolt", 12)} Réservation instantanée</span>` : ""}<span class="badge">${esc(i.category)}</span><span class="badge">${esc(i.style)}</span>${i.occasions.map((x) => `<span class="badge">${esc(x)}</span>`).join("")}</div>
+        <div class="box row gap">${avatar(o)}
+          <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">★ ${fmtRating(o.rating)} · ${o.reviews} avis · ${esc(o.city)}, ${kmLabel(dist(o.id))}</div></div>
+        </div>
+        ${i.description ? `<p class="desc">${esc(i.description)}</p>` : ""}
+        ${mine ? `<div class="box note">C'est une pièce de ton dressing. <a href="#/dressing/${id}">La modifier</a></div>` : `
+        <section class="stack">
+          <h2 class="h3">Durée de location</h2>
+          <div class="dur" style="grid-template-columns:repeat(${durs.length},1fr)">${durs.map((d) => `<button data-action="dur" data-id="${id}" data-d="${d.id}" aria-pressed="${b.durationId === d.id}"><span class="small">${d.label}</span><strong>${euro(i.prices[d.id])}</strong><span class="tiny">${euro(Math.round(i.prices[d.id] / d.days * 100) / 100)}/jour</span></button>`).join("")}</div>
+          <label class="field"><span>Date de remise</span><input type="date" id="start" min="${addDays(today(), 1)}" value="${b.start}"></label>
+          <p id="avail" class="small"></p>
+          ${ranges.length ? `<p class="muted small">Indisponible : ${ranges.map((r) => `${fmtShort(r.start)} → ${fmtShort(r.end)}`).join(", ")}</p>` : ""}
+        </section>
+        <section class="stack">
+          <h2 class="h3">Remise</h2>
+          <div class="radios">
+            ${i.handover !== "envoi" ? `<label class="radio"><input type="radio" name="handover" value="main" ${b.handover === "main" ? "checked" : ""}><span><strong>En main propre · gratuit</strong><span class="muted small">À ${esc(o.city)} (${kmLabel(dist(o.id))}), lieu et heure à convenir par message</span></span></label>` : ""}
+            ${i.handover !== "main" ? `<label class="radio"><input type="radio" name="handover" value="envoi" ${b.handover === "envoi" ? "checked" : ""}><span><strong>Envoi en point relais · ${euro(SHIPPING_FEE)} aller-retour</strong><span class="muted small">Un seul colis, étiquette retour incluse. À partir de ${euro(SHIPPING_MIN)} de location.</span></span></label>` : ""}
+          </div>
+          <div id="extras"></div>
+        </section>
+        <section class="stack">
+          <h2 class="h3">Nettoyage</h2>
+          ${i.cleaningRequired ? `<p class="box note small">Pièce délicate : le forfait nettoyage (${euro(i.cleaningFee)}) est obligatoire.</p>` : `
+          <div class="radios">
+            <label class="radio"><input type="radio" name="clean" value="propre" ${b.cleaning === "propre" ? "checked" : ""}><span><strong>Je la rends propre</strong><span class="muted small">Lavage selon l'étiquette, contrôlé au retour</span></span></label>
+            <label class="radio"><input type="radio" name="clean" value="forfait" ${b.cleaning === "forfait" ? "checked" : ""}><span><strong>Forfait nettoyage · ${euro(i.cleaningFee)}</strong><span class="muted small">La loueuse s'en occupe</span></span></label>
+          </div>`}
+        </section>
+        ${credit > 0 ? `<label class="toggle box"><input type="checkbox" id="use-credit" ${b.useCredit ? "checked" : ""}><span>Utiliser mon crédit Aïlo (${euro(credit)})<span class="muted small block">Tes gains de location servent à louer à ton tour.</span></span></label>` : ""}
+        <section class="box list" id="recap"></section>
+        <p class="muted small">La caution est bloquée puis remboursée après le retour contrôlé.</p>
+        `}
+      </div>
+      ${mine ? "" : `<div class="bottombar"><div><strong id="bb-total" class="big accent"></strong><div id="bb-sub" class="muted small"></div></div>
+        <button class="btn" data-action="book" data-id="${id}" id="book-btn">${i.instant ? "Réserver" : "Demander"}</button></div>`}`,
+    mount() { if (!mine) updateBooking(id); }
+  };
+}
+
+// Autres pièces de la même loueuse qu'on peut ajouter au colis
+function groupCandidates(i, b) {
+  return S.catalog({}).filter((x) => x.ownerId === i.ownerId && x.id !== i.id && x.handover !== "main" && Number(x.prices[b.durationId]) > 0);
+}
+
+function updateBooking(id) {
+  const i = S.item(id), b = ui.booking[id];
+  if (b.handover !== "envoi") b.extras = [];
+  const itemIds = [id, ...b.extras];
+  const q = S.quote({ itemIds, durationId: b.durationId, cleaning: b.cleaning, handover: b.handover, useCredit: b.useCredit });
+  const dur = DURATIONS.find((d) => d.id === b.durationId);
+  const avail = document.getElementById("avail");
+  let ok = true;
+  if (b.start) {
+    const end = addDays(b.start, dur.days);
+    const tooSoon = b.handover === "envoi" && b.start < addDays(today(), SHIPPING_DAYS + 1);
+    const busy = itemIds.filter((x) => !S.isAvailable(x, b.start, end, b.handover));
+    ok = !tooSoon && !busy.length;
+    avail.innerHTML = tooSoon ? `<span class="err">Pour un envoi, choisis une date au moins ${SHIPPING_DAYS + 1} jours après aujourd'hui.</span>`
+      : busy.length ? `<span class="err">Pas disponible à ces dates${busy.length && busy[0] !== id ? ` : ${esc(S.item(busy[0]).title)}` : ""}.</span>`
+        : `<span class="ok">${icon("check", 14)} Disponible</span> · retour le ${fmtDate(end)}`;
+  } else avail.textContent = "Choisis la date à laquelle tu récupères le vêtement.";
+
+  // Envoi groupé
+  const ex = document.getElementById("extras");
+  if (b.handover === "envoi") {
+    const cands = groupCandidates(i, b);
+    ex.innerHTML = `${q.shippingOk ? `<p class="small ok">${icon("check", 14)} Envoi possible : ${euro(q.price)} de location dans le colis.</p>`
+      : `<p class="box warnbox small">L'envoi demande au moins ${euro(SHIPPING_MIN)} de location. Il manque ${euro(q.missingForShipping)} : ajoute une autre pièce de ${esc(S.user(i.ownerId).name)} au même colis${i.handover !== "envoi" ? ", ou choisis la remise en main propre" : ""}.</p>`}
+      ${cands.length ? `<div class="stack"><p class="small"><strong>Dans le même colis</strong> <span class="muted">(${esc(S.user(i.ownerId).name)})</span></p>${cands.map((c) => `
+        <label class="extra"><input type="checkbox" data-extra="${c.id}" ${b.extras.includes(c.id) ? "checked" : ""}><span class="extra-ph">${photo(c)}</span><span class="grow"><strong class="small">${esc(c.title)}</strong><span class="muted small block">T. ${esc(c.size)} · ${esc(c.condition)}</span></span><span class="small">+ ${euro(c.prices[b.durationId])}</span></label>`).join("")}</div>` : ""}`;
+  } else ex.innerHTML = "";
+
+  const n = itemIds.length;
+  document.getElementById("recap").innerHTML = `
+    <div class="li"><span>Location · ${dur.label.toLowerCase()}${n > 1 ? ` · ${n} pièces` : ""}</span><span>${euro(q.price)}</span></div>
+    ${q.cleaningFee ? `<div class="li"><span>Nettoyage</span><span>${euro(q.cleaningFee)}</span></div>` : ""}
+    <div class="li"><span>${b.handover === "envoi" ? "Envoi aller-retour" : "Remise en main propre"}</span><span>${q.shippingFee ? euro(q.shippingFee) : "gratuit"}</span></div>
+    <div class="li"><span>Frais de service <span class="muted small">(protection, paiement sécurisé)</span></span><span>${euro(q.serviceFee)}</span></div>
+    ${q.creditUsed ? `<div class="li"><span>Crédit Aïlo</span><span class="accent">− ${euro(q.creditUsed)}</span></div>` : ""}
+    <div class="li"><span>Caution <span class="muted small">(remboursée)</span></span><span>${euro(q.deposit)}</span></div>
+    <div class="li total"><span>À payer</span><span>${euro(q.total)}</span></div>`;
+  document.getElementById("bb-total").textContent = euro(q.total - q.deposit);
+  document.getElementById("bb-sub").textContent = `${dur.label}${b.start ? " · " + fmtShort(b.start) + " → " + fmtShort(addDays(b.start, dur.days)) : ""} + caution ${euro(q.deposit)}`;
+  const btn = document.getElementById("book-btn");
+  btn.disabled = !b.start || !ok || !q.shippingOk;
+  btn.textContent = itemIds.every((x) => S.item(x).instant) ? "Réserver" : "Demander";
+}
+
+// ---------------------------------------------------------------- Dressing
+function dressing() {
+  const items = S.myItems();
+  const cats = [...new Set(items.map((i) => i.category))];
+  const shown = ui.dressFilter ? items.filter((i) => i.category === ui.dressFilter) : items;
+  const lend = S.myLendings();
+  const active = lend.filter((r) => ["confirmee", "remise", "rendue"].includes(r.status)).length;
+  const pending = lend.filter((r) => r.status === "demandee").length;
+  const badge = (i) => {
+    if (i.status === "paused") return `<span class="st paused">En pause</span>`;
+    const out = lend.some((r) => S.group(r).some((x) => x.itemId === i.id) && ["remise", "rendue"].includes(r.status));
+    return out ? `<span class="st out">Louée</span>` : `<span class="st on">En ligne</span>`;
+  };
+  return {
+    tab: "dressing", title: "Mon dressing",
+    html: `<div class="page">
+      <h1 class="h1">Mon dressing</h1>
+      <div class="stats"><div><strong>${items.length}</strong><span>pièces</span></div><div><strong>${active}</strong><span>en location</span></div><div class="accent-bg"><strong>${euro(S.earnings())}</strong><span>gains prévus</span></div></div>
+      ${pending ? `<a class="box alert" href="#/locations" data-action="tab-loue">${pending} demande${pending > 1 ? "s" : ""} de location en attente ${icon("chevron", 16)}</a>` : ""}
+      <div class="chips">${["", ...cats].map((c) => `<button class="chip ${ui.dressFilter === c ? "on" : ""}" data-action="dress-filter" data-c="${esc(c)}" aria-pressed="${ui.dressFilter === c}">${c || "Tout"}</button>`).join("")}</div>
+      <div class="grid3">
+        <a class="add-tile" href="#/dressing/nouveau">${icon("plus", 26)}<span>Ajouter</span></a>
+        ${shown.map((i) => `<a class="tile" href="#/dressing/${i.id}" aria-label="${esc(i.title)}">${photo(i)}${badge(i)}</a>`).join("")}
+      </div>
+      ${items.length ? "" : `<p class="muted center">Ajoute ta première pièce : une photo, l'IA remplit le reste.</p>`}
+    </div>`
+  };
+}
+
+// ---------------------------------------------------------------- Formulaire pièce
+function itemForm(id) {
+  const existing = id ? S.item(id) : null;
+  if (id && (!existing || existing.ownerId !== S.me().id)) return { html: empty("Pièce introuvable", "", `<a class="btn" href="#/dressing">Retour</a>`) };
+  if (!ui.draft || ui.draft._for !== (id || "new")) {
+    ui.draft = existing ? JSON.parse(JSON.stringify(existing)) : {
+      photos: [], title: "", description: "", defects: "", brand: "", category: "", style: "", color: "", size: "", condition: "",
+      occasions: [], prices: { we: "", sem: "", deux: "", mois: "" }, deposit: "", cleaningFee: 8, cleaningRequired: false,
+      handover: "main", instant: false, unavailable: []
+    };
+    ui.draft._for = id || "new";
+    ui.draft.unavailable = ui.draft.unavailable || [];
+  }
+  const d = ui.draft;
+  return {
+    noTabbar: true, bottomBar: true, title: existing ? "Modifier" : "Nouvelle pièce",
+    html: `<form id="item-form" class="page" novalidate>
+      <header class="topbar"><button type="button" class="icon-btn" data-action="cancel-form" aria-label="Annuler">${icon("close", 20)}</button><h1 class="h1 inline">${existing ? "Modifier la pièce" : "Nouvelle pièce"}</h1><span></span></header>
+
+      <section class="stack"><h2 class="h3">1. Photos <span class="muted small">(3 à 8, format portrait)</span></h2>
+        <div class="photo-strip" id="photo-strip">${photoStrip(d)}</div>
+        <p class="muted small">Fond neutre, lumière du jour, la pièce entière puis les détails. Ajoute aussi une photo de l'étiquette : l'IA y lit la marque et la taille.</p>
+        <button type="button" class="btn ghost ai-btn" data-action="ai-fill" ${d.photos.length ? "" : "disabled"}>${icon("sparkle", 18)} Remplir avec l'IA</button>
+      </section>
+
+      <section class="stack"><h2 class="h3">2. Description</h2>
+        <label class="field"><span>Titre *</span><input name="title" required maxlength="60" placeholder="Ex. Robe longue satinée" value="${esc(d.title)}"></label>
+        <label class="field"><span>Description</span><textarea name="description" rows="3" maxlength="500" placeholder="Coupe, matière, nombre de fois portée…">${esc(d.description)}</textarea></label>
+        <div class="two">
+          <label class="field"><span>Catégorie *</span><select name="category" required>${opts(CATEGORIES, d.category, "Choisir")}</select></label>
+          <label class="field"><span>Style *</span><select name="style" required>${opts(STYLES, d.style, "Choisir")}</select></label>
+          <label class="field"><span>Taille *</span><select name="size" required>${opts(SIZES, d.size, "Choisir")}</select></label>
+          <label class="field"><span>État *</span><select name="condition" required>${opts(CONDITIONS, d.condition, "Choisir")}</select></label>
+        </div>
+        <p class="muted small" id="cond-hint">${esc(CONDITION_HINTS[d.condition] || "")}</p>
+        <label class="field"><span>Défauts éventuels</span><textarea name="defects" rows="2" maxlength="300" placeholder="Ex. petit fil tiré au bas de la jupe. Laisse vide s'il n'y en a pas.">${esc(d.defects || "")}</textarea></label>
+        <label class="field"><span>Marque</span><input name="brand" maxlength="40" value="${esc(d.brand)}"></label>
+        <fieldset class="field"><legend>Couleur *</legend><div class="swatches">
+          ${COLORS.map((c) => `<label class="sw" title="${c.name}"><input type="radio" name="color" value="${c.name}" ${d.color === c.name ? "checked" : ""}><span style="background:${c.hex}"></span><span class="sr">${c.name}</span></label>`).join("")}
+        </div><span class="muted small" id="color-name">${esc(d.color)}</span></fieldset>
+        <fieldset class="field"><legend>Occasions</legend><div class="chips wrap">
+          ${OCCASIONS.map((o) => `<label class="chip check"><input type="checkbox" name="occasions" value="${o}" ${d.occasions.includes(o) ? "checked" : ""}><span>${o}</span></label>`).join("")}
+        </div></fieldset>
+      </section>
+
+      <section class="stack"><h2 class="h3">3. Durées, prix et caution</h2>
+        <div class="box suggest"><label class="field"><span>Prix d'achat (pour suggérer les prix)</span><input type="number" id="buy" min="0" step="1" inputmode="numeric" placeholder="Ex. 150"></label><button type="button" class="btn ghost sm" data-action="suggest">Suggérer</button></div>
+        <p class="muted small">Remplis le prix des durées que tu acceptes ; laisse vide les autres. C'est ainsi que tu fixes ta durée minimale et maximale.</p>
+        <div class="four">
+          ${DURATIONS.map((x) => `<label class="field"><span>${x.label}</span><input type="number" name="p-${x.id}" min="1" step="1" inputmode="numeric" value="${d.prices[x.id] ?? ""}" placeholder="—"></label>`).join("")}
+        </div>
+        <label class="field"><span>Caution *</span><input type="number" name="deposit" min="0" step="5" inputmode="numeric" value="${d.deposit}" required></label>
+        <p class="muted small">Aïlo prélève ${COMMISSION_RATE * 100} % sur le prix de location. Le forfait nettoyage, l'envoi et la caution ne sont pas commissionnés.</p>
+      </section>
+
+      <section class="stack"><h2 class="h3">4. Remise, nettoyage, réservation</h2>
+        <fieldset class="field"><legend>Modes de remise acceptés *</legend>
+          <label class="toggle"><input type="checkbox" name="hv" value="main" ${d.handover !== "envoi" ? "checked" : ""}><span>En main propre<span class="muted small block">Gratuit pour la locataire. Lieu et heure à convenir par message.</span></span></label>
+          <label class="toggle"><input type="checkbox" name="hv" value="envoi" ${d.handover === "envoi" || d.handover === "both" ? "checked" : ""}><span>Envoi en point relais<span class="muted small block">La locataire paie ${euro(SHIPPING_FEE)} aller-retour, à partir de ${euro(SHIPPING_MIN)} de location (plusieurs de tes pièces peuvent partir dans le même colis). Aïlo te fournit l'étiquette.</span></span></label>
+        </fieldset>
+        <label class="field"><span>Forfait nettoyage</span><input type="number" name="cleaningFee" min="0" step="1" value="${d.cleaningFee}"></label>
+        <label class="toggle"><input type="checkbox" name="cleaningRequired" ${d.cleaningRequired ? "checked" : ""}><span>Forfait obligatoire (pièce délicate, pressing)</span></label>
+        <label class="toggle"><input type="checkbox" name="instant" ${d.instant ? "checked" : ""}><span>Réservation instantanée<span class="muted small block">Si le calendrier est libre, la location est confirmée sans attendre ton accord.</span></span></label>
+      </section>
+
+      <section class="stack"><h2 class="h3">5. Indisponibilités</h2>
+        <p class="muted small">Bloque les périodes où la pièce n'est pas disponible (vacances, tu la portes toi-même…).</p>
+        <div id="unav">${unavList(d)}</div>
+        <div class="two"><label class="field"><span>Du</span><input type="date" id="un-start" min="${today()}"></label><label class="field"><span>Au</span><input type="date" id="un-end" min="${today()}"></label></div>
+        <button type="button" class="btn ghost sm" data-action="add-unav">Bloquer cette période</button>
+      </section>
+
+      ${existing ? `<section class="stack danger-zone">
+        <button type="button" class="btn ghost" data-action="pause" data-id="${id}">${existing.status === "paused" ? "Remettre en ligne" : "Mettre en pause"}</button>
+        <button type="button" class="btn ghost danger" data-action="delete" data-id="${id}">Supprimer la pièce</button>
+        <a class="btn ghost" href="#/item/${id}">Voir l'annonce</a></section>` : ""}
+      <p id="form-err" class="err small" role="alert"></p>
+      <div class="bottombar"><span class="muted small">* obligatoire</span><button class="btn">${existing ? "Enregistrer" : "Publier"}</button></div>
+    </form>`,
+    mount() {
+      const form = document.getElementById("item-form");
+      form.addEventListener("input", () => syncDraft(form));
+      form.addEventListener("change", (e) => {
+        syncDraft(form);
+        if (e.target.name === "color") document.getElementById("color-name").textContent = e.target.value;
+        if (e.target.name === "condition") document.getElementById("cond-hint").textContent = CONDITION_HINTS[e.target.value] || "";
+      });
+      form.addEventListener("submit", (e) => { e.preventDefault(); submitItem(form, id); });
+    }
+  };
+}
+
+const unavList = (d) => d.unavailable.length ? `<div class="box list">${d.unavailable.map((u, k) => `<div class="li"><span>${fmtShort(u.start)} → ${fmtShort(u.end)}</span><button type="button" class="linkbtn" data-action="rm-unav" data-k="${k}">Retirer</button></div>`).join("")}</div>` : "";
+
+function photoStrip(d) {
+  return d.photos.map((p, k) => `<div class="thumb"><img src="${p}" alt="Photo ${k + 1}"><button type="button" class="thumb-x" data-action="rm-photo" data-k="${k}" aria-label="Retirer la photo ${k + 1}">${icon("close", 14)}</button>${k === 0 ? '<span class="thumb-main">Principale</span>' : ""}</div>`).join("") +
+    (d.photos.length < 8 ? `<label class="thumb add">${icon("camera", 24)}<span>Ajouter</span><input type="file" accept="image/*" multiple id="photo-input" class="sr"></label>` : "");
+}
+
+function syncDraft(form) {
+  const d = ui.draft, fd = new FormData(form);
+  for (const k of ["title", "description", "defects", "brand", "category", "style", "size", "condition"]) d[k] = fd.get(k) ?? d[k];
+  d.color = fd.get("color") || d.color;
+  d.occasions = fd.getAll("occasions");
+  d.prices = Object.fromEntries(DURATIONS.map((x) => [x.id, num(fd.get("p-" + x.id))]));
+  d.deposit = num(fd.get("deposit"));
+  d.cleaningFee = num(fd.get("cleaningFee")) || 0;
+  d.cleaningRequired = fd.get("cleaningRequired") === "on";
+  d.instant = fd.get("instant") === "on";
+  const hv = fd.getAll("hv");
+  d.handover = hv.length === 2 ? "both" : hv[0] || "";
+}
+const num = (v) => (v === null || v === "" ? "" : Number(v));
+
+function submitItem(form, id) {
+  syncDraft(form);
+  const d = ui.draft, err = document.getElementById("form-err");
+  const missing = [];
+  if (!d.title.trim()) missing.push("titre");
+  for (const k of ["category", "style", "size", "condition", "color"]) if (!d[k]) missing.push({ category: "catégorie", style: "style", size: "taille", condition: "état", color: "couleur" }[k]);
+  const filled = DURATIONS.filter((x) => Number(d.prices[x.id]) > 0);
+  if (!filled.length) missing.push("au moins un prix");
+  if (d.deposit === "") missing.push("caution");
+  if (!d.handover) missing.push("un mode de remise");
+  const fail = (m) => { err.textContent = m; err.scrollIntoView({ block: "center" }); };
+  if (missing.length) return fail("Il manque : " + missing.join(", ") + ".");
+  for (let k = 1; k < filled.length; k++) if (Number(d.prices[filled[k].id]) < Number(d.prices[filled[k - 1].id])) return fail("Le prix total doit augmenter avec la durée.");
+  if (d.condition === "Bon état" && !d.defects.trim()) return fail("Pour une pièce en « bon état », décris les signes d'usure dans « Défauts ».");
+  const data = Object.assign({}, d);
+  delete data._for;
+  if (!d.photos.length && !id) toast("Publiée sans photo : ajoute-en vite, c'est ce qui fait louer.");
+  const newId = S.saveItem(data);
+  ui.draft = null;
+  toast(id ? "Modifications enregistrées" : "Ta pièce est en ligne !");
+  go(`#/item/${newId}`);
+}
+
+// ---------------------------------------------------------------- Locations
+function locations() {
+  const list = ui.locTab === "prends" ? S.myRentals() : S.myLendings();
+  const pend = S.myLendings().filter((r) => r.status === "demandee").length;
+  return {
+    tab: "locations", title: "Mes locations",
+    html: `<div class="page">
+      <h1 class="h1">Mes locations</h1>
+      <div class="seg" role="group" aria-label="Type de locations">
+        <button data-action="loc-tab" data-k="prends" aria-pressed="${ui.locTab === "prends"}">Je prends</button>
+        <button data-action="loc-tab" data-k="loue" aria-pressed="${ui.locTab === "loue"}">Je loue${pend ? ` <span class="count-badge inline">${pend}</span>` : ""}</button>
+      </div>
+      ${list.length ? `<div class="stack">${list.map(locCard).join("")}</div>` :
+        ui.locTab === "prends" ? empty("Aucune location pour l'instant", "Trouve la tenue de ton prochain événement.", `<a class="btn" href="#/">Découvrir</a>`) :
+          empty("Personne n'a encore loué tes pièces", "Plus tu publies de pièces avec de belles photos, plus tu loues.", `<a class="btn" href="#/dressing/nouveau">Ajouter une pièce</a>`)}
+    </div>`
+  };
+}
+
+const gone = { title: "Pièce supprimée", tint: "#EEE", photos: [] };
+function locCard(r) {
+  const g = S.group(r);
+  const i = S.item(r.itemId) || gone;
+  const other = S.user(ui.locTab === "prends" ? r.ownerId : r.renterId);
+  return `<a class="box loc" href="#/location/${r.id}">
+    <div class="loc-ph">${photo(i)}</div>
+    <div class="grow"><strong>${esc(i.title)}</strong>${g.length > 1 ? ` <span class="badge">+${g.length - 1}</span>` : ""}
+      <div class="muted small">${ui.locTab === "prends" ? "Chez" : "Louée par"} ${esc(other.name)}${r.handover === "envoi" ? " · envoi" : ""}</div>
+      <div class="small">${fmtShort(r.start)} → ${fmtShort(r.end)}</div></div>
+    ${statusPill(r.status)}</a>`;
+}
+
+function locationDetail(id) {
+  const r = S.reservation(id);
+  if (!r) return { html: empty("Location introuvable", "", `<a class="btn" href="#/locations">Retour</a>`) };
+  const g = S.group(r);
+  const amRenter = r.renterId === S.me().id;
+  const other = S.user(amRenter ? r.ownerId : r.renterId);
+  const steps = ["demandee", "confirmee", "remise", "rendue", "terminee"];
+  const cur = steps.indexOf(r.status === "litige" ? "rendue" : r.status);
+  const myRole = amRenter ? "renter" : "owner";
+  const acts = S.TRANSITIONS[r.status] || [];
+  const mine = acts.filter((a) => a.by === "both" || a.by === myRole);
+  const theirs = acts.filter((a) => a.by !== "both" && a.by !== myRole);
+  const sum = (k) => g.reduce((s, x) => s + Number(x[k] || 0), 0);
+  const price = sum("price"), cleaning = sum("cleaningFee"), deposit = sum("deposit");
+  const ship = r.shippingFee || 0, service = r.serviceFee || 0, creditUsed = r.creditUsed || 0;
+  const paid = price + cleaning + ship + service - creditUsed + deposit;
+  return {
+    tab: "locations", title: "Location",
+    html: `<div class="page">
+      <header class="topbar"><a class="icon-btn" href="#/locations" aria-label="Retour">${icon("back", 20)}</a><h1 class="h1 inline">${amRenter ? "Ma location" : "Location de mes pièces"}</h1><span></span></header>
+      <div class="stack">${g.map((x) => { const i = S.item(x.itemId) || gone; return `<a class="box loc" href="#/item/${x.itemId}"><div class="loc-ph">${photo(i)}</div>
+        <div class="grow"><strong>${esc(i.title)}</strong><div class="muted small">${amRenter ? "Chez" : "Louée par"} ${esc(other.name)} · ${esc(other.city)}</div></div>${x === r ? statusPill(r.status) : ""}</a>`; }).join("")}</div>
+      ${g.length > 1 ? `<p class="muted small">${g.length} pièces dans le même colis.</p>` : ""}
+      ${["refusee", "annulee"].includes(r.status) ? "" : `<ol class="steps">${steps.map((s, k) => `<li class="${k < cur ? "done" : k === cur ? "cur" : ""}">${STATUS[s].label}</li>`).join("")}</ol>`}
+      <div class="two"><div class="box mini"><span class="muted small">Remise</span><strong>${fmtDate(r.start)}</strong></div><div class="box mini"><span class="muted small">Retour</span><strong>${fmtDate(r.end)}</strong></div></div>
+      <div class="box stack">${calendar(r.start, [{ start: r.start, end: r.end }])}${r.end.slice(0, 7) !== r.start.slice(0, 7) ? calendar(r.end, [{ start: r.start, end: r.end }]) : ""}</div>
+      <section class="box list">
+        <div class="li"><span>Location${g.length > 1 ? ` · ${g.length} pièces` : ""}</span><span>${euro(price)}</span></div>
+        <div class="li"><span>Nettoyage</span><span>${cleaning ? euro(cleaning) : "Rendue propre"}</span></div>
+        <div class="li"><span>${r.handover === "envoi" ? "Envoi aller-retour" : "Remise en main propre"}</span><span>${ship ? euro(ship) : "gratuit"}</span></div>
+        ${amRenter ? `<div class="li"><span>Frais de service</span><span>${euro(service)}</span></div>
+          ${creditUsed ? `<div class="li"><span>Crédit Aïlo</span><span class="accent">− ${euro(creditUsed)}</span></div>` : ""}
+          <div class="li"><span>Caution</span><span>${euro(deposit)}</span></div>
+          <div class="li total"><span>Total payé</span><span>${euro(paid)}</span></div>` :
+          `<div class="li"><span class="muted">Commission Aïlo (${COMMISSION_RATE * 100} %)</span><span class="muted">− ${euro(price * COMMISSION_RATE)}</span></div>
+          <div class="li total"><span>Tu recevras</span><span>${euro(S.groupPayout(r))}</span></div>`}
+      </section>
+      ${mine.length ? `<div class="stack">${mine.map((a) => `<button class="btn ${a.ghost ? "ghost" : ""}" data-action="transition" data-id="${r.id}" data-to="${a.to}">${a.label}</button>`).join("")}</div>` : ""}
+      ${theirs.length ? `<div class="box demo"><p class="small"><strong>Mode démo</strong> · à faire par ${esc(other.name)} :</p>${theirs.map((a) => `<button class="btn ghost sm" data-action="transition" data-id="${r.id}" data-to="${a.to}">${a.label}</button>`).join("")}</div>` : ""}
+      ${r.handover === "envoi" ? `<p class="box note small">${amRenter ? `Envoi en point relais : le colis part ${SHIPPING_DAYS} jours avant la remise. Pour le retour, l'étiquette est incluse.` : `Envoi en point relais : dépose le colis ${SHIPPING_DAYS} jours avant le ${fmtShort(r.start)}. L'étiquette est fournie par Aïlo.`}</p>` : ""}
+      <a class="btn ghost" href="#/messages/${r.thread}">${icon("chat", 18)} Écrire à ${esc(other.name.split(" ")[0])}</a>
+      ${r.status === "terminee" && amRenter && !r.review ? reviewForm() : ""}
+      ${r.review ? `<div class="box"><p class="small muted">Avis</p><p>${"★".repeat(r.review.rating)}${"☆".repeat(5 - r.review.rating)}</p><p>${esc(r.review.text)}</p></div>` : ""}
+    </div>`,
+    mount() {
+      const f = document.getElementById("review-form");
+      if (f) f.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const fd = new FormData(f);
+        if (!fd.get("rating")) { toast("Choisis une note"); return; }
+        S.review(r.id, Number(fd.get("rating")), fd.get("text") || "");
+        toast("Merci pour ton avis !");
+        route(true);
+      });
+    }
+  };
+}
+
+function reviewForm() {
+  return `<form id="review-form" class="box stack"><h2 class="h3">Ton avis</h2>
+    <fieldset class="stars"><legend class="sr">Note</legend>${[5, 4, 3, 2, 1].map((n) => `<input type="radio" id="st${n}" name="rating" value="${n}"><label for="st${n}" aria-label="${n} sur 5">★</label>`).join("")}</fieldset>
+    <label class="field"><span>Commentaire</span><textarea name="text" rows="2" maxlength="300" placeholder="Propreté, conformité, remise…"></textarea></label>
+    <button class="btn">Publier l'avis</button></form>`;
+}
+
+// ---------------------------------------------------------------- Messages
+function messagesList() {
+  const convs = S.conversations();
+  return {
+    tab: "messages", title: "Messages",
+    html: `<div class="page"><h1 class="h1">Messages</h1>
+      ${convs.length ? `<div class="box list">${convs.map(({ r, last }) => {
+        const other = S.user(r.renterId === S.me().id ? r.ownerId : r.renterId);
+        const i = S.item(r.itemId) || gone;
+        return `<a class="conv" href="#/messages/${r.id}">${avatar(other)}
+          <span class="grow"><strong>${esc(other.name)}</strong> <span class="muted small">· ${esc(i.title)}</span>
+          <span class="muted small ellipsis block">${last.from === "system" ? "" : last.from === S.me().id ? "Toi : " : ""}${esc(last.text)}</span></span>${icon("chevron", 16)}</a>`;
+      }).join("")}</div>` : empty("Pas encore de messages", "Une conversation s'ouvre avec chaque réservation.")}
+    </div>`
+  };
+}
+
+function thread(rid) {
+  const r = S.reservation(rid);
+  if (!r) return { html: empty("Conversation introuvable", "", `<a class="btn" href="#/messages">Retour</a>`) };
+  const other = S.user(r.renterId === S.me().id ? r.ownerId : r.renterId);
+  const i = S.item(r.itemId) || gone;
+  const msgs = S.messages(rid);
+  return {
+    tab: "messages", title: other.name,
+    html: `<div class="thread">
+      <header class="thread-head"><a class="icon-btn" href="#/messages" aria-label="Retour">${icon("back", 20)}</a>${avatar(other)}
+        <a class="grow plain" href="#/location/${r.id}"><strong>${esc(other.name)}</strong><span class="muted small block">${esc(i.title)} · ${fmtShort(r.start)} → ${fmtShort(r.end)}</span></a></header>
+      <div class="bubbles" id="bubbles">${msgs.map((m) => m.from === "system" ? `<p class="sys">${esc(m.text)}</p>` : `<p class="bubble ${m.from === S.me().id ? "me" : ""}">${esc(m.text)}</p>`).join("")}
+        ${r.status === "confirmee" ? `<p class="tip">${icon("camera", 16)} À la remise, faites ensemble l'état des lieux photo : il protège la caution.</p>` : ""}</div>
+      <form class="composer" id="composer"><label class="grow"><span class="sr">Écrire un message</span><input name="t" placeholder="Écrire un message…" autocomplete="off" maxlength="1000"></label>
+        <button class="icon-btn solid" aria-label="Envoyer">${icon("send", 20)}</button></form>
+    </div>`,
+    mount() {
+      window.scrollTo(0, document.body.scrollHeight);
+      document.getElementById("composer").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const t = e.target.t.value.trim();
+        if (!t) return;
+        S.sendMessage(rid, t);
+        route(true);
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+    }
+  };
+}
+
+// ---------------------------------------------------------------- Profil
+function profil() {
+  const u = S.me();
+  const received = S.myLendings().filter((r) => r.review);
+  const plans = { base: "Base", premium: "Premium", pro: "Pro", partenaire: "Partenaire" };
+  return {
+    tab: "profil", title: "Mon profil",
+    html: `<div class="page">
+      <div class="row gap">${avatar(u, "xl")}
+        <div class="grow"><h1 class="h1 inline">${esc(u.name)}</h1><div class="muted small">${icon("pin", 13)} ${esc(u.city)}${u.verified ? " · identité vérifiée" : ""}</div></div>
+        <span class="pill tone-ok solid">${plans[u.plan]}</span></div>
+      <div class="two"><div class="box mini"><span class="muted small">Crédit Aïlo</span><strong class="accent">${euro(S.credit())}</strong></div><div class="box mini"><span class="muted small">Gains prévus</span><strong>${euro(S.earnings())}</strong></div></div>
+      <div class="box center rating">
+        <div class="score">${fmtRating(u.rating)}</div><div class="accent" aria-label="Note de ${u.rating} sur 5">★★★★★</div>
+        <div class="muted small">${u.reviews} avis</div>
+        <div class="crit"><div><span class="muted small">Propreté</span><strong>5,0</strong></div><div><span class="muted small">Conformité</span><strong>4,9</strong></div><div><span class="muted small">Ponctualité</span><strong>4,8</strong></div></div>
+      </div>
+      ${received.map((r) => `<div class="box"><div class="row between small"><strong>${esc(S.user(r.renterId).name)}</strong><span class="muted">${"★".repeat(r.review.rating)}</span></div><p>${esc(r.review.text)}</p></div>`).join("")}
+      <nav class="box list menu" aria-label="Mon compte">
+        <a href="#/profil/modifier"><span>Modifier mon profil</span><span class="muted">${icon("chevron", 16)}</span></a>
+        <a href="#/favoris"><span>Mes favoris</span><span class="muted">${S.favorites().length} ${icon("chevron", 16)}</span></a>
+        <button data-action="earnings"><span>Mes gains et mon crédit</span><span class="muted">${icon("chevron", 16)}</span></button>
+        <button data-action="plans"><span>Mon abonnement</span><span class="muted">${plans[u.plan]} ${icon("chevron", 16)}</span></button>
+        <button data-action="verify"><span>Vérifier mon identité</span><span class="muted">${u.verified ? "Fait" : "À faire"} ${icon("chevron", 16)}</span></button>
+        <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
+        <button data-action="reset"><span>Réinitialiser la démo</span><span class="muted">${icon("chevron", 16)}</span></button>
+      </nav>
+      <p class="muted small center">Aïlo v0.3 · démonstration : données sur cet appareil, aucun paiement réel. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+    </div>
+    <dialog id="sheet" class="sheet"></dialog>`
+  };
+}
+
+function editProfile() {
+  const u = S.me();
+  ui.place = { zip: u.zip, city: u.city, lat: u.lat, lng: u.lng };
+  return {
+    tab: "profil", title: "Modifier mon profil",
+    html: `<form id="pf" class="page" novalidate>
+      <header class="topbar"><a class="icon-btn" href="#/profil" aria-label="Retour">${icon("back", 20)}</a><h1 class="h1 inline">Mon profil</h1><span></span></header>
+      <div class="row gap"><span id="pf-av">${avatar(u, "xl")}</span>
+        <label class="btn ghost sm">${icon("camera", 18)} Changer la photo<input type="file" accept="image/*" id="pf-photo" class="sr"></label></div>
+      <label class="field"><span>Prénom et initiale</span><input name="name" value="${esc(u.name)}" maxlength="30" required></label>
+      ${placePicker(ui.place)}
+      <p id="pf-err" class="err small" role="alert"></p>
+      <button class="btn">Enregistrer</button>
+    </form>`,
+    mount() {
+      mountPlacePicker();
+      let newPhoto = null;
+      document.getElementById("pf-photo").addEventListener("change", async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        newPhoto = await resizeImage(f, 400);
+        document.getElementById("pf-av").innerHTML = `<img class="avatar xl" src="${newPhoto}" alt="">`;
+      });
+      document.getElementById("pf").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const name = e.target.name.value.trim();
+        if (!name) return (document.getElementById("pf-err").textContent = "Indique ton prénom.");
+        if (!ui.place) return (document.getElementById("pf-err").textContent = "Choisis ta commune dans la liste.");
+        S.updateMe(Object.assign({ name }, ui.place, newPhoto ? { photo: newPhoto } : {}));
+        ui.place = null;
+        toast("Profil enregistré");
+        go("#/profil");
+      });
+    }
+  };
+}
+
+function openSheet(html) {
+  const s = document.getElementById("sheet");
+  s.innerHTML = `<form method="dialog">${html}<div class="sheet-actions"><button class="btn">Fermer</button></div></form>`;
+  s.showModal();
+}
+
+// ---------------------------------------------------------------- Actions (délégation)
+const actions = {
+  back: () => back("#/"),
+  fav(el) { S.toggleFav(el.dataset.id); route(true); },
+  group(el) { ui.groupBy = el.dataset.k; route(true); },
+  occasion(el) { ui.filters.occasion = ui.filters.occasion === el.dataset.o ? "" : el.dataset.o; route(true); },
+  "open-filters"() {
+    const dlg = document.getElementById("filters");
+    const form = document.getElementById("filters-form");
+    form.maxPrice.addEventListener("input", () => { document.getElementById("pv").textContent = form.maxPrice.value >= 50 ? "sans limite" : euro(form.maxPrice.value); });
+    form.radius.addEventListener("input", () => { document.getElementById("rv").textContent = form.radius.value >= 100 ? "partout" : form.radius.value + " km"; });
+    dlg.addEventListener("close", () => {
+      if (dlg.returnValue !== "apply") return;
+      const fd = new FormData(form);
+      for (const k of ["category", "style", "color", "size", "brand", "condition", "handover", "date", "sort"]) ui.filters[k] = fd.get(k) || "";
+      ui.filters.maxPrice = Number(fd.get("maxPrice")) >= 50 ? "" : fd.get("maxPrice");
+      ui.filters.radius = Number(fd.get("radius")) >= 100 ? 100 : Number(fd.get("radius"));
+      ui.filters.includeShipping = fd.get("includeShipping") === "on";
+      route(true);
+    }, { once: true });
+    dlg.showModal();
+  },
+  "clear-filters"() {
+    ui.filters = freshFilters();
+    const dlg = document.getElementById("filters");
+    if (dlg && dlg.open) dlg.close("cancel");
+    route(true);
+  },
+  dur(el) {
+    const b = ui.booking[el.dataset.id];
+    b.durationId = el.dataset.d;
+    b.extras = b.extras.filter((x) => Number(S.item(x).prices[b.durationId]) > 0);
+    view.querySelectorAll("[data-action=dur]").forEach((x) => x.setAttribute("aria-pressed", x === el));
+    updateBooking(el.dataset.id);
+  },
+  book(el) {
+    const id = el.dataset.id, b = ui.booking[id];
+    const res = S.book({ itemIds: [id, ...b.extras], durationId: b.durationId, start: b.start, cleaning: b.cleaning, handover: b.handover, useCredit: b.useCredit });
+    if (res.error) { toast(res.error); return; }
+    delete ui.booking[id];
+    ui.locTab = "prends";
+    toast(res.reservation.status === "confirmee" ? "Réservation confirmée !" : "Demande envoyée à la loueuse");
+    go(`#/location/${res.reservation.id}`);
+  },
+  "dress-filter"(el) { ui.dressFilter = el.dataset.c; route(true); },
+  "tab-loue"() { ui.locTab = "loue"; },
+  "loc-tab"(el) { ui.locTab = el.dataset.k; route(true); },
+  "rm-photo"(el) { ui.draft.photos.splice(Number(el.dataset.k), 1); refreshPhotos(); },
+  "add-unav"() {
+    const s = document.getElementById("un-start").value, e = document.getElementById("un-end").value;
+    if (!s || !e || e < s) { toast("Choisis une date de début et une date de fin."); return; }
+    ui.draft.unavailable.push({ start: s, end: e });
+    ui.draft.unavailable.sort((a, b) => a.start.localeCompare(b.start));
+    document.getElementById("unav").innerHTML = unavList(ui.draft);
+  },
+  "rm-unav"(el) { ui.draft.unavailable.splice(Number(el.dataset.k), 1); document.getElementById("unav").innerHTML = unavList(ui.draft); },
+  async "ai-fill"(el) {
+    const url = aiEndpoint();
+    if (!url) { toast("L'assistant IA sera disponible dès que son serveur sera en ligne."); return; }
+    syncDraft(document.getElementById("item-form"));
+    const label = el.innerHTML;
+    el.disabled = true; el.textContent = "Analyse des photos…";
+    try {
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ images: ui.draft.photos.slice(0, 3) }) });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const a = await res.json();
+      const n = applyAI(a);
+      route(true);
+      if (a.estimatedValue && !DURATIONS.some((x) => Number(ui.draft.prices[x.id]) > 0)) {
+        document.getElementById("buy").value = Math.round(a.estimatedValue);
+        actions.suggest(null, true);
+      }
+      toast(n ? "Fiche pré-remplie : vérifie et corrige avant de publier." : "L'IA n'a rien trouvé de sûr : remplis à la main.");
+    } catch (e) {
+      toast("L'analyse n'a pas fonctionné. Remplis les champs à la main.");
+      el.disabled = false; el.innerHTML = label;
+    }
+  },
+  suggest(el, quiet) {
+    const buy = Number(document.getElementById("buy").value);
+    if (!buy) { toast("Indique le prix d'achat"); return; }
+    const f = document.getElementById("item-form");
+    const r = (n) => Math.max(5, Math.round(n));
+    f["p-we"].value = r(buy * 0.13); f["p-sem"].value = r(buy * 0.2); f["p-deux"].value = r(buy * 0.3); f["p-mois"].value = r(buy * 0.45);
+    f.deposit.value = Math.round(buy * 0.5 / 5) * 5;
+    syncDraft(f);
+    if (!quiet) toast("Prix suggérés : ajuste-les, et vide les durées que tu ne veux pas proposer.");
+  },
+  "cancel-form"() { ui.draft = null; back("#/dressing"); },
+  pause(el) { const i = S.item(el.dataset.id); S.setItemStatus(i.id, i.status === "paused" ? "online" : "paused"); ui.draft = null; toast(i.status === "paused" ? "Pièce en pause : elle n'apparaît plus" : "Pièce remise en ligne"); go("#/dressing"); },
+  delete(el) {
+    const active = S.myLendings().some((r) => S.group(r).some((x) => x.itemId === el.dataset.id) && ["demandee", "confirmee", "remise", "rendue"].includes(r.status));
+    if (active) { toast("Impossible : une location est en cours sur cette pièce."); return; }
+    if (!confirm("Supprimer définitivement cette pièce ?")) return;
+    S.deleteItem(el.dataset.id); ui.draft = null; toast("Pièce supprimée"); go("#/dressing");
+  },
+  transition(el) { S.transition(el.dataset.id, el.dataset.to); toast(STATUS[el.dataset.to].label); route(true); },
+  "pick-place"(el) { setPlace(el.dataset); },
+  async "geo-me"(el) {
+    const label = el.innerHTML;
+    el.disabled = true; el.textContent = "Localisation…";
+    try {
+      const pos = await currentPosition();
+      setPlace(await nearestPlace(pos.lat, pos.lng));
+      toast(`Commune trouvée : ${ui.place.city}`);
+    } catch (e) {
+      toast("Position indisponible : tape ton code postal.");
+    }
+    el.disabled = false; el.innerHTML = label;
+  },
+  earnings() {
+    const list = S.myLendings().filter((r) => ["confirmee", "remise", "rendue", "terminee"].includes(r.status));
+    openSheet(`<h2 class="h2">Mes gains et mon crédit</h2><p class="muted small">Montants nets, après la commission de ${COMMISSION_RATE * 100} %. Une location terminée devient du crédit : tu peux l'utiliser pour louer à ton tour, ou le virer sur ton compte.</p>
+      <div class="box list">${list.map((r) => `<div class="li"><span>${esc((S.item(r.itemId) || gone).title)} <span class="muted small">${fmtShort(r.start)} · ${STATUS[r.status].label.toLowerCase()}</span></span><span>${euro(S.groupPayout(r))}</span></div>`).join("") || '<p class="muted">Aucune location pour l\'instant.</p>'}
+      <div class="li total"><span>Crédit disponible</span><span>${euro(S.credit())}</span></div></div>`);
+  },
+  plans() {
+    openSheet(`<h2 class="h2">Abonnements</h2><p class="muted small">Contenu à définir — proposition.</p>
+      <div class="plans">
+        <div class="box"><strong>Base · gratuit</strong><p class="small">Publier et louer. Commission de ${COMMISSION_RATE * 100} % par location.</p></div>
+        <div class="box accent-border"><strong>Premium</strong><p class="small">Statistiques de ce qui se loue, badge qualité, annonces en haut de page.</p></div>
+        <div class="box"><strong>Pro</strong><p class="small">Pour les professionnelles : badge Pro, annonces illimitées, page vitrine.</p></div>
+      </div>`);
+  },
+  verify() {
+    openSheet(`<h2 class="h2">Vérifier mon identité</h2><p class="small">La vérification se fera avec Stripe, le prestataire de paiement : une photo de ta carte d'identité et un selfie. Elle sera demandée avant ta première location et avant de recevoir tes premiers gains.</p><p class="muted small">Pas encore active dans cette version de démonstration.</p>`);
+  },
+  reset() { if (confirm("Remettre les données de démonstration ? Tes ajouts seront effacés.")) { S.resetDemo(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); toast("Démo réinitialisée"); go("#/"); route(); } }
+};
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el || !actions[el.dataset.action]) return;
+  if (el.tagName === "A" && el.dataset.action !== "tab-loue") e.preventDefault();
+  actions[el.dataset.action](el, e);
+});
+
+// Champs de la fiche (date, remise, nettoyage, colis, crédit) et ajout de photos
+document.addEventListener("change", async (e) => {
+  const t = e.target;
+  const onItem = location.hash.startsWith("#/item/");
+  const id = onItem ? location.hash.split("/")[2] : null;
+  if (onItem && ui.booking[id]) {
+    const b = ui.booking[id];
+    if (t.id === "start") b.start = t.value;
+    else if (t.name === "clean") b.cleaning = t.value;
+    else if (t.name === "handover" && t.type === "radio") b.handover = t.value;
+    else if (t.dataset.extra) b.extras = t.checked ? [...b.extras, t.dataset.extra] : b.extras.filter((x) => x !== t.dataset.extra);
+    else if (t.id === "use-credit") b.useCredit = t.checked;
+    else return;
+    updateBooking(id);
+    return;
+  }
+  if (t.id === "photo-input") {
+    const files = [...t.files].slice(0, 8 - ui.draft.photos.length);
+    for (const f of files) {
+      try { ui.draft.photos.push(await resizeImage(f)); } catch (err) { toast("Photo illisible : " + f.name); }
+    }
+    refreshPhotos();
+  }
+});
+
+function refreshPhotos() {
+  document.getElementById("photo-strip").innerHTML = photoStrip(ui.draft);
+  const b = view.querySelector("[data-action=ai-fill]");
+  if (b) b.disabled = !ui.draft.photos.length;
+}
+
+// Remplit uniquement les champs encore vides, avec des valeurs de nos listes
+function applyAI(a) {
+  const d = ui.draft;
+  let n = 0;
+  const set = (k, v, list) => {
+    if (!v || d[k]) return;
+    if (list && !list.includes(v)) return;
+    d[k] = v; n++;
+  };
+  set("title", typeof a.title === "string" ? a.title.slice(0, 60) : "");
+  set("description", typeof a.description === "string" ? a.description.slice(0, 500) : "");
+  set("category", a.category, CATEGORIES);
+  set("style", a.style, STYLES);
+  set("color", a.color, COLORS.map((c) => c.name));
+  set("size", a.size, SIZES);
+  set("brand", typeof a.brand === "string" ? a.brand.slice(0, 40) : "");
+  if (!d.occasions.length && Array.isArray(a.occasions)) {
+    d.occasions = a.occasions.filter((o) => OCCASIONS.includes(o));
+    if (d.occasions.length) n++;
+  }
+  return n;
+}
+
+// ---------------------------------------------------------------- Démarrage
+route();
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
