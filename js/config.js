@@ -1,7 +1,7 @@
 // Aïlo — réglages
 // Adresse du Worker Cloudflare qui fait l'analyse IA des photos (voir worker/README-worker.md).
 // Laisser vide tant que le Worker n'est pas en ligne : le bouton « Remplir avec l'IA » prévient alors l'utilisatrice.
-export const AI_ENDPOINT = "";
+export const AI_ENDPOINT = "https://ailo-ai.lepoint2023.workers.dev/analyse";
 
 // Pour tester un autre Worker sans republier l'app : dans la console du navigateur,
 // localStorage.setItem("ailo-ai-endpoint", "https://…/analyse")
