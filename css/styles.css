@@ -339,3 +339,10 @@ img.avatar { object-fit: cover; }
 .pw input { padding-right: 56px !important; }
 .pw-eye { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 48px; height: 44px; border: 0; background: none; color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 10px; }
 .pw-eye[aria-pressed="true"] { color: var(--accent); }
+
+/* ---- v0.4.4 : bloc Spécial mariage ---- */
+.wedding { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 16px 18px; border: 0; border-radius: var(--radius); cursor: pointer; color: var(--ink);
+  background: linear-gradient(135deg, #F3EBDA 0%, #E9DCCF 100%); box-shadow: inset 0 0 0 1px #E2D6C4; }
+.wedding-kicker { font-size: 12px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--accent); }
+.wedding strong { font-family: var(--serif); font-size: 20px; font-weight: 600; }
+.wedding span:last-child { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ink-2); }

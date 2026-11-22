@@ -12,11 +12,11 @@ const MODEL = "google/gemini-3.1-flash-lite";
 const MAX_BODY = 4_000_000; // ~4 Mo : 3 photos réduites par l'app passent largement
 
 const LISTS = {
-  category: ["Robe", "Costume", "Combinaison", "Jupe", "Haut", "Pantalon", "Veste", "Manteau", "Sac", "Accessoire", "Chaussures"],
+  category: ["Robe", "Robe de mariée", "Costume", "Combinaison", "Jupe", "Haut", "Pantalon", "Veste", "Manteau", "Sac", "Accessoire", "Chaussures"],
   style: ["Chic", "Classique", "Bohème", "Glamour", "Vintage", "Minimaliste", "Rock"],
   color: ["Noir", "Blanc", "Écru", "Beige", "Camel", "Marron", "Gris", "Rouge", "Bordeaux", "Rose", "Orange", "Jaune", "Vert", "Kaki", "Bleu", "Marine", "Turquoise", "Violet", "Doré", "Argenté", "Multicolore"],
   size: ["XS", "S", "M", "L", "XL", "34", "36", "38", "40", "42", "44", "46", "48", "50", "52", "Unique"],
-  occasions: ["Mariage", "Soirée", "Bal", "Communion", "Cocktail", "Gala", "Baptême"]
+  occasions: ["Mariage", "Soirée", "Cocktail", "Gala", "Communion", "Baptême", "Tous les jours"]
 };
 
 const SYSTEM = `Tu aides une particulière à publier un vêtement à louer sur Aïlo, une app belge de location de tenues pour des événements.

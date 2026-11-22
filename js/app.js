@@ -225,6 +225,7 @@ function decouvrir() {
       <button class="where" data-action="open-filters">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>
       <div class="label-caps">Afficher par</div>
       <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
+      ${f.occasion === "Mariage" ? "" : `<button class="wedding" data-action="occasion" data-o="Mariage"><span class="wedding-kicker">Spécial mariage</span><strong>Invitée, témoin ou mariée</strong><span>Toutes les tenues pour le grand jour ${icon("chevron", 16)}</span></button>`}
       <div class="chips">${OCCASIONS.map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o}</button>`).join("")}</div>
       <div class="section-head"><h2 class="h2">${f.occasion ? `Occasion : ${esc(f.occasion)}` : "Près de chez toi"}</h2></div>
       <div id="results">${resultsHTML()}</div>
