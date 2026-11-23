@@ -365,3 +365,22 @@ img.avatar { object-fit: cover; }
 .new-dot { display: inline-block; width: 9px; height: 9px; border-radius: 5px; background: var(--rose); vertical-align: middle; }
 .box.paybox { background: var(--accent-tint); border-color: transparent; }
 .box.paybox p { margin: 0 0 4px; }
+
+/* v0.7 : installation, recherche par photo, partage, conseils photo */
+.install-banner { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: var(--radius); background: var(--accent-tint); color: var(--ink); }
+.install-banner .icon-btn.plain { width: 36px; height: 36px; }
+.ib-icon { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 20px; background: var(--accent); color: #fff; flex: none; }
+.icon-btn.plain { border: 0; background: transparent; }
+.icon-btn.ghost-solid { background: var(--paper); border-color: var(--line); color: var(--accent); }
+.searchrow { gap: 8px; }
+.welcome-steps { display: grid; gap: 10px; margin: 10px 0; }
+.welcome-steps .box { align-items: center; }
+.steps-list { padding-left: 20px; display: grid; gap: 8px; margin: 10px 0; }
+.lookalike { display: flex; align-items: center; gap: 12px; }
+.lookalike img { width: 64px; height: 84px; object-fit: cover; border-radius: 10px; flex: none; }
+.lookalike .tags { margin-top: 6px; }
+.share-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; }
+.tips { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; font-size: 14px; }
+.tips summary { cursor: pointer; font-weight: 600; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+.tips ul { margin: 10px 0 4px; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); }
+.field-input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font: inherit; }

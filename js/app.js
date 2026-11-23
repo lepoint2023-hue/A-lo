@@ -158,6 +158,7 @@ function onboarding() {
       <p class="muted">Deux informations pour commencer : elles servent à te montrer les pièces près de chez toi.</p>
       <label class="field"><span>Ton prénom *</span><input name="name" maxlength="30" autocomplete="given-name" value="${esc(u.name)}" required></label>
       ${placePicker(ui.place)}
+      <label class="toggle"><input type="checkbox" name="adult" required><span>J'ai 18 ans ou plus.</span></label>
       <label class="toggle"><input type="checkbox" name="terms" required><span>J'accepte les <a href="#/cgu">conditions générales</a> et la politique de confidentialité.</span></label>
       <p id="onb-err" class="err small" role="alert"></p>
       <button class="btn">Commencer</button>
@@ -171,11 +172,14 @@ function onboarding() {
         const name = f.name.value.trim();
         if (!name) return (err.textContent = "Indique ton prénom.");
         if (!ui.place) return (err.textContent = "Choisis ta commune dans la liste, ou utilise ta position.");
+        if (!f.adult.checked) return (err.textContent = "Aïlo est réservée aux personnes majeures (18 ans et plus).");
         if (!f.terms.checked) return (err.textContent = "Accepte les conditions générales pour continuer.");
         S.updateMe(Object.assign({ name: name.charAt(0).toUpperCase() + name.slice(1), acceptedTerms: new Date().toISOString() }, ui.place));
         ui.place = null;
         toast(`Bienvenue ${S.me().name} !`);
-        go("#/"); route();
+        const target = /^#\/(item|membre)\//.test(location.hash) ? location.hash : "#/"; // arrivée par un lien partagé
+        go(target); route();
+        setTimeout(maybeWelcome, 1200);
       });
     }
   };
@@ -187,6 +191,7 @@ function cgu() {
     html: `<div class="page prose">
       <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><h1 class="h1 inline">Conditions générales</h1><span></span></header>
       <p class="box note small">Brouillon de travail : ces conditions doivent être rédigées et validées par un juriste avant l'ouverture au public.</p>
+      <h2 class="h3">Âge minimum</h2><p>Aïlo est réservée aux personnes de 18 ans et plus. La vérification d'identité (avant la première location et avant de recevoir des gains) contrôle aussi l'âge.</p>
       <h2 class="h3">Le rôle d'Aïlo</h2><p>Aïlo met en relation des particuliers et des professionnelles qui louent des vêtements avec des personnes qui en ont besoin. Aïlo n'est ni propriétaire ni vendeur des pièces.</p>
       <h2 class="h3">Paiement, caution, frais</h2><p>La locataire paie la location, les frais de service (${euro(SERVICE_FEE.fixed)} + ${SERVICE_FEE.rate * 100} % de la location), l'éventuel forfait nettoyage et, en cas d'envoi, un forfait aller-retour de ${euro(SHIPPING_FEE)}. Une caution est bloquée puis remboursée après le retour contrôlé. Aïlo prélève ${COMMISSION_RATE * 100} % sur la part de la loueuse.</p>
       <h2 class="h3">Remise et retour</h2><p>Un état des lieux photo est fait à la remise et au retour. En cas de dommage, Aïlo compare les photos ; la retenue ne dépasse jamais la caution.</p>
@@ -236,11 +241,13 @@ function decouvrir() {
     html: `<div class="page">
       <header class="topbar"><div class="logo">Aïlo</div>
         <a class="icon-btn" href="#/favoris" aria-label="Mes favoris">${icon("heart", 20)}</a></header>
+      ${installBanner()}
       <p class="muted">Bonjour ${esc(u.name)}</p>
       <h1 class="h1">Quelle tenue pour ton prochain événement ?</h1>
       <div class="searchrow">
         <label class="search">${icon("search", 18)}<span class="sr">Rechercher</span>
           <input id="q" type="search" placeholder="Robe, marque, taille 38…" value="${esc(f.q)}" autocomplete="off"></label>
+        <button class="icon-btn solid ghost-solid" data-action="photo-search" aria-label="Rechercher avec une photo">${icon("camera", 20)}</button>
         <button class="icon-btn solid" data-action="open-filters" aria-label="Filtres">${icon("filter", 20)}${n ? `<span class="count-badge">${n}</span>` : ""}</button>
       </div>
       <button class="where" data-action="open-filters">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>
@@ -248,6 +255,9 @@ function decouvrir() {
       <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
       ${f.occasion === "Mariage" ? "" : `<button class="wedding" data-action="occasion" data-o="Mariage"><span class="wedding-kicker">Spécial mariage</span><strong>Invitée, témoin ou mariée</strong><span>Toutes les tenues pour le grand jour ${icon("chevron", 16)}</span></button>`}
       <div class="chips">${OCCASIONS.map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o}</button>`).join("")}</div>
+      <input type="file" accept="image/*" id="search-photo" class="sr" aria-label="Choisir une photo d'inspiration">
+      ${lookalikeHTML()}
+      ${forYouHTML()}
       <div class="section-head"><h2 class="h2">${f.occasion ? `Occasion : ${esc(f.occasion)}` : "Près de chez toi"}</h2></div>
       <div id="results">${resultsHTML()}</div>
     </div>
@@ -331,6 +341,7 @@ function fiche(id) {
           <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">${ratingLine(o)} · ${esc(o.city)}${kmLabel(dist(o.id)) ? ", " + kmLabel(dist(o.id)) : ""}</div></div>${icon("chevron", 16)}
         </a>
         ${i.description ? `<p class="desc">${esc(i.description)}</p>` : ""}
+        <button class="linkbtn share-link" data-action="share" data-kind="item" data-id="${id}">${icon("share", 16)} Partager cette pièce</button>
         ${mine ? `<div class="box note">C'est une pièce de ton dressing. <a href="#/dressing/${id}">La modifier</a></div>` : `
         <section class="stack">
           <h2 class="h3">Durée de location</h2>
@@ -362,7 +373,7 @@ function fiche(id) {
       </div>
       ${mine ? "" : `<div class="bottombar"><div><strong id="bb-total" class="big accent"></strong><div id="bb-sub" class="muted small"></div></div>
         <button class="btn" data-action="book" data-id="${id}" id="book-btn">${i.instant ? "Réserver" : "Demander"}</button></div>`}`,
-    mount() { if (!mine) updateBooking(id); }
+    mount() { if (!mine) { updateBooking(id); taste.add(i, 1); } }
   };
 }
 
@@ -423,7 +434,8 @@ function membre(id) {
   return {
     tab: "decouvrir", title: u.name,
     html: `<div class="page">
-      <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><span class="grow"></span></header>
+      <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><span class="grow"></span>
+        <button class="icon-btn" data-action="share" data-kind="membre" data-id="${id}" aria-label="Partager ce dressing">${icon("share", 20)}</button></header>
       <div class="row gap">${avatar(u, "xl")}
         <div class="grow"><h1 class="h1 inline">${esc(u.name)}</h1>
           <div class="muted small">${icon("pin", 13)} ${esc(u.city)}${kmLabel(dist(id)) ? " · " + kmLabel(dist(id)) : ""}${u.verified ? " · identité vérifiée" : ""}</div>
@@ -485,7 +497,15 @@ function itemForm(id) {
 
       <section class="stack"><h2 class="h3">1. Photos <span class="muted small">(3 à 8, format portrait)</span></h2>
         <div class="photo-strip" id="photo-strip">${photoStrip(d)}</div>
-        <p class="muted small">Fond neutre, lumière du jour, la pièce entière puis les détails. Ajoute aussi une photo de l'étiquette : l'IA y lit la marque et la taille.</p>
+        <details class="tips"><summary>${icon("camera", 16)} Conseils pour des photos qui donnent envie</summary>
+          <ul>
+            <li><strong>Lumière du jour</strong>, près d'une fenêtre, sans flash.</li>
+            <li><strong>Fond neutre et rangé</strong> : mur clair, porte, drap uni.</li>
+            <li><strong>Portée ou sur cintre</strong>, bien repassée : la pièce entière en première photo.</li>
+            <li><strong>Format portrait</strong>, la pièce centrée, net (essuie l'objectif).</li>
+            <li>Puis <strong>les détails</strong> : matière, dos, fermeture, et un éventuel défaut.</li>
+            <li>Une photo de <strong>l'étiquette</strong> : l'IA y lit la marque et la taille.</li>
+          </ul></details>
         <button type="button" class="btn ghost ai-btn" data-action="ai-fill" ${d.photos.length ? "" : "disabled"}>${icon("sparkle", 18)} Remplir avec l'IA</button>
       </section>
 
@@ -775,6 +795,8 @@ function profil() {
       ${received.map((r) => `<div class="box"><div class="row between small"><strong>${esc(S.user(r.renterId).name)}</strong><span class="muted">${"★".repeat(r.review.rating)}</span></div><p>${esc(r.review.text)}</p></div>`).join("")}
       <nav class="box list menu" aria-label="Mon compte">
         <a href="#/profil/modifier"><span>Modifier mon profil</span><span class="muted">${icon("chevron", 16)}</span></a>
+        ${isStandalone() ? "" : `<button data-action="install"><span>Installer l'application</span><span class="muted">${icon("chevron", 16)}</span></button>`}
+        <button data-action="share" data-kind="membre" data-id="${S.me().id}"><span>Partager mon dressing</span><span class="muted">${icon("chevron", 16)}</span></button>
         <button data-action="notif-on"><span>Notifications</span><span class="muted">${"Notification" in window && Notification.permission === "granted" ? "Activées" : "Activer"} ${icon("chevron", 16)}</span></button>
         <a href="#/favoris"><span>Mes favoris</span><span class="muted">${S.favorites().length} ${icon("chevron", 16)}</span></a>
         <button data-action="earnings"><span>Mes gains et mon crédit</span><span class="muted">${icon("chevron", 16)}</span></button>
@@ -783,7 +805,7 @@ function profil() {
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
         <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
-      <p class="muted small center">Aïlo v0.6 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+      <p class="muted small center">Aïlo v0.7 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
     </div>
     <dialog id="sheet" class="sheet"></dialog>`
   };
@@ -826,7 +848,8 @@ function editProfile() {
 }
 
 function openSheet(html) {
-  const s = document.getElementById("sheet");
+  let s = document.getElementById("sheet");
+  if (!s) { s = document.createElement("dialog"); s.id = "sheet"; s.className = "sheet"; document.body.appendChild(s); }
   s.innerHTML = `<form method="dialog">${html}<div class="sheet-actions"><button class="btn">Fermer</button></div></form>`;
   if (!s.open) s.showModal();
 }
@@ -834,7 +857,7 @@ function openSheet(html) {
 // ---------------------------------------------------------------- Actions (délégation)
 const actions = {
   back: () => back("#/"),
-  fav(el) { S.toggleFav(el.dataset.id); route(true); },
+  fav(el) { S.toggleFav(el.dataset.id); if (S.isFav(el.dataset.id)) taste.add(S.item(el.dataset.id), 2); route(true); },
   group(el) { ui.groupBy = el.dataset.k; route(true); },
   occasion(el) { ui.filters.occasion = ui.filters.occasion === el.dataset.o ? "" : el.dataset.o; route(true); },
   "open-filters"() {
@@ -981,6 +1004,32 @@ const actions = {
     toast("Location confirmée");
     route(true);
   },
+  async install() {
+    if (deferredInstall) {
+      const e = deferredInstall; deferredInstall = null;
+      e.prompt();
+      try { await e.userChoice; } catch (err) { /* ignore */ }
+      route(true);
+      return;
+    }
+    openSheet(installHelp());
+  },
+  "install-later"() { try { localStorage.setItem("ailo-install-dismissed", "1"); } catch (e) { /* ignore */ } route(true); },
+  "welcome-notif"() { document.getElementById("sheet").close(); actions["notif-on"](); },
+  "welcome-install"() { document.getElementById("sheet").close(); actions.install(); },
+  async share(el) {
+    const id = el.dataset.id, base = location.origin + location.pathname;
+    const isItem = el.dataset.kind === "item";
+    const it = isItem ? S.item(id) : null, u = isItem ? null : S.user(id);
+    const url = base + (isItem ? "#/item/" : "#/membre/") + id;
+    const title = isItem ? `${it.title} à louer sur Aïlo` : (id === S.me().id ? "Mon dressing sur Aïlo" : `Le dressing de ${u.name} sur Aïlo`);
+    const text = isItem ? `${it.title}, taille ${it.size}, à louer dès ${euro(S.minPrice(it))} sur Aïlo.` : "Des tenues à louer pour tes événements, entre particuliers.";
+    if (navigator.share) { try { await navigator.share({ title, text, url }); } catch (e) { /* partage annulé */ } return; }
+    try { await navigator.clipboard.writeText(url); toast("Lien copié : colle-le dans un message ou une story."); }
+    catch (e) { openSheet(`<h2 class="h2">Partager</h2><p class="small">Copie ce lien :</p><input class="field-input" readonly value="${esc(url)}" onclick="this.select()">`); }
+  },
+  "photo-search"() { document.getElementById("search-photo").click(); },
+  "clear-lookalike"() { ui.lookalike = null; route(true); },
   async "notif-on"() {
     if (!("Notification" in window)) { toast("Sur iPhone, ajoute d'abord Aïlo à l'écran d'accueil, puis ouvre-la depuis l'icône."); return; }
     const p = await Notification.requestPermission();
@@ -1063,6 +1112,11 @@ document.addEventListener("change", async (e) => {
     updateBooking(id);
     return;
   }
+  if (t.id === "search-photo") {
+    const f = t.files[0]; t.value = "";
+    if (f) await photoSearch(f);
+    return;
+  }
   if (t.id === "photo-input") {
     const files = [...t.files].slice(0, 8 - ui.draft.photos.length);
     for (const f of files) {
@@ -1100,6 +1154,136 @@ function applyAI(a) {
     if (d.occasions.length) n++;
   }
   return n;
+}
+
+
+// ---------------------------------------------------------------- Installer l'app, notifications
+let deferredInstall = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  if (currentTab() === "decouvrir" && !document.querySelector("dialog[open]")) route(true);
+});
+window.addEventListener("appinstalled", () => { deferredInstall = null; toast("Aïlo est installée : retrouve-la sur ton écran d'accueil."); });
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+
+function installBanner() {
+  if (isStandalone() || lsGet("ailo-install-dismissed") || !(deferredInstall || isIOS())) return "";
+  return `<div class="install-banner" role="region" aria-label="Installer l'application">
+    <span class="ib-icon">${icon("download", 20)}</span>
+    <span class="grow"><strong>Installe Aïlo</strong><span class="small block">Sur ton écran d'accueil, avec les notifications.</span></span>
+    <button class="btn sm" data-action="install">Installer</button>
+    <button class="icon-btn plain" data-action="install-later" aria-label="Plus tard">${icon("close", 18)}</button>
+  </div>`;
+}
+function installHelp() {
+  if (isIOS()) return `<h2 class="h2">Installer Aïlo sur iPhone</h2>
+    <ol class="steps-list small">
+      <li>Ouvre Aïlo dans <strong>Safari</strong>.</li>
+      <li>Touche le bouton <strong>Partager</strong> ${icon("share", 16)} en bas de l'écran.</li>
+      <li>Choisis <strong>« Sur l'écran d'accueil »</strong>, puis <strong>Ajouter</strong>.</li>
+      <li>Ouvre Aïlo depuis sa nouvelle icône, puis active les notifications dans Profil.</li>
+    </ol>`;
+  return `<h2 class="h2">Installer Aïlo</h2>
+    <ol class="steps-list small">
+      <li>Ouvre le menu du navigateur <strong>⋮</strong> (en haut à droite).</li>
+      <li>Choisis <strong>« Installer l'application »</strong> ou <strong>« Ajouter à l'écran d'accueil »</strong>.</li>
+      <li>Sur ordinateur, tu peux aussi cliquer sur l'icône d'installation à droite de la barre d'adresse.</li>
+    </ol>`;
+}
+// Une seule fois par compte et par appareil : proposer l'installation et les notifications
+function maybeWelcome() {
+  if (!S.hasSession() || !S.isOnboarded() || document.querySelector("dialog[open]")) return;
+  const key = "ailo-welcome-" + S.me().id;
+  if (lsGet(key)) return;
+  const needInstall = !isStandalone();
+  const needNotif = "Notification" in window && Notification.permission === "default";
+  if (!needInstall && !needNotif) { lsSet(key, "1"); return; }
+  lsSet(key, "1");
+  openSheet(`<h2 class="h2">Aïlo dans ta poche</h2>
+    <p class="small">Deux petits réglages pour ne rater aucune demande ni aucun message.</p>
+    <div class="welcome-steps">
+      ${needInstall ? `<div class="box row gap"><span class="ib-icon">${icon("download", 20)}</span><span class="grow"><strong>Installer l'application</strong><span class="small block muted">Une icône sur ton écran d'accueil, comme une vraie app.</span></span>
+        <button type="button" class="btn sm" data-action="welcome-install">Installer</button></div>` : ""}
+      ${needNotif ? `<div class="box row gap"><span class="ib-icon">${icon("bell", 20)}</span><span class="grow"><strong>Activer les notifications</strong><span class="small block muted">${isIOS() && !isStandalone() ? "Sur iPhone : installe d'abord l'app, puis active-les depuis l'icône." : "Une alerte en haut de l'écran à chaque message ou réservation."}</span></span>
+        ${isIOS() && !isStandalone() ? "" : `<button type="button" class="btn sm" data-action="welcome-notif">Activer</button>`}</div>` : ""}
+    </div>`);
+}
+
+// ---------------------------------------------------------------- Goûts : « Tu pourrais aimer »
+const taste = {
+  key: () => "ailo-taste-" + S.me().id,
+  get() { try { return JSON.parse(lsGet(this.key()) || "{}"); } catch (e) { return {}; } },
+  add(i, w) {
+    if (!i) return;
+    const t = this.get();
+    const bump = (k, v) => { if (!v) return; t[k] = t[k] || {}; t[k][v] = (t[k][v] || 0) + w; };
+    bump("cat", i.category); bump("color", i.color); bump("style", i.style); bump("size", i.size);
+    (i.occasions || []).forEach((o) => bump("occ", o));
+    t.n = (t.n || 0) + w;
+    lsSet(this.key(), JSON.stringify(t));
+  },
+  score(i, t) {
+    const g = (k, v) => (t[k] && t[k][v]) || 0;
+    return g("cat", i.category) * 3 + g("color", i.color) * 2 + g("style", i.style) * 1.5 + g("size", i.size) * 2 + (i.occasions || []).reduce((s, o) => s + g("occ", o), 0);
+  }
+};
+function forYouHTML() {
+  const f = ui.filters;
+  if (f.q || f.occasion || ui.lookalike || activeFilterCount()) return "";
+  const t = taste.get();
+  if ((t.n || 0) < 3) return "";
+  const items = S.catalog({ radius: f.radius, includeShipping: true })
+    .map((i) => ({ i, s: taste.score(i, t) })).filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s).slice(0, 8).map((x) => x.i);
+  if (items.length < 2) return "";
+  return `<section class="group"><h2 class="h2">Tu pourrais aimer</h2><div class="hscroll">${items.map(card).join("")}</div></section>`;
+}
+
+// ---------------------------------------------------------------- Recherche par photo (Pinterest, capture Zara…)
+function similarity(i, a) {
+  let s = 0;
+  if (a.category && i.category === a.category) s += 4;
+  if (a.color && i.color === a.color) s += 3;
+  if (a.style && i.style === a.style) s += 2;
+  (a.occasions || []).forEach((o) => { if (i.occasions.includes(o)) s += 1; });
+  const words = (x) => String(x || "").toLowerCase().split(/[^a-zà-ÿ]+/).filter((w) => w.length > 3);
+  const mine = new Set(words(`${i.title} ${i.pattern} ${i.description}`));
+  const hits = words(`${a.pattern} ${a.title}`).filter((w) => mine.has(w)).length;
+  return s + Math.min(hits, 3);
+}
+function lookalikeHTML() {
+  const L = ui.lookalike;
+  if (!L) return "";
+  if (L.loading) return `<section class="box lookalike"><img src="${L.photo}" alt="Ta photo d'inspiration"><div class="grow"><strong>Je cherche des pièces qui ressemblent…</strong><p class="muted small">Analyse de ta photo en cours.</p></div></section>`;
+  const a = L.a || {};
+  const items = S.catalog({ includeShipping: true }).map((i) => ({ i, s: similarity(i, a) })).filter((x) => x.s >= 3).sort((x, y) => y.s - x.s).slice(0, 12).map((x) => x.i);
+  const tags = [a.category, a.color, a.pattern, a.style].filter(Boolean).map((x) => `<span class="badge">${esc(x)}</span>`).join("");
+  return `<section class="stack lookalike-wrap">
+    <div class="box lookalike"><img src="${L.photo}" alt="Ta photo d'inspiration"><div class="grow"><strong>Inspirée de ta photo</strong><div class="tags">${tags || `<span class="muted small">Rien de reconnu sur cette image.</span>`}</div></div>
+      <button class="icon-btn plain" data-action="clear-lookalike" aria-label="Effacer la recherche par photo">${icon("close", 18)}</button></div>
+    ${items.length ? `<div class="hscroll">${items.map(card).join("")}</div>` : `<p class="muted small">Aucune pièce ne ressemble encore à ça. Essaie une autre photo, ou reviens bientôt : le catalogue grandit.</p>`}
+  </section>`;
+}
+async function photoSearch(file) {
+  let img;
+  try { img = await resizeImage(file); } catch (e) { toast("Cette image n'a pas pu être lue."); return; }
+  ui.lookalike = { photo: img, loading: true };
+  route(true);
+  try {
+    const res = await fetch(aiEndpoint(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ images: [img] }) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const a = await res.json();
+    ui.lookalike = { photo: img, a };
+    taste.add({ category: a.category, color: a.color, style: a.style, occasions: a.occasions || [] }, 2);
+  } catch (e) {
+    ui.lookalike = null;
+    toast("L'analyse de la photo n'a pas fonctionné. Réessaie dans un instant.");
+  }
+  if (location.hash === "" || location.hash === "#/") route(true);
 }
 
 // ---------------------------------------------------------------- Connexion
@@ -1177,6 +1361,7 @@ S.init().catch(() => {}).finally(() => {
   route();
   // Si les notifications sont déjà autorisées, on (ré)abonne discrètement cet appareil
   if (S.hasSession() && "Notification" in window && Notification.permission === "granted") S.enablePush().catch(() => {});
+  setTimeout(maybeWelcome, 1500);
 });
 
 // Rafraîchit les données en revenant dans l'app, et régulièrement sur les écrans de suivi
