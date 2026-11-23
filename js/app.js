@@ -565,7 +565,7 @@ function itemForm(id) {
     ui.draft = existing ? JSON.parse(JSON.stringify(existing)) : {
       photos: [], title: "", description: "", defects: "", brand: "", category: "", style: "", color: "", pattern: "", size: "", condition: "",
       occasions: [], prices: { we: "", sem: "", deux: "", mois: "" }, deposit: "", cleaningFee: 8, cleaningRequired: false,
-      handover: "main", instant: false, unavailable: []
+      handover: "both", instant: false, unavailable: []
     };
     ui.draft._for = id || "new";
     ui.draft.unavailable = ui.draft.unavailable || [];
@@ -612,19 +612,24 @@ function itemForm(id) {
       </section>
 
       <section class="stack"><h2 class="h3">3. Durées, prix et caution</h2>
-        <div class="box suggest"><label class="field"><span>Prix d'achat (pour suggérer les prix)</span><input type="number" id="buy" min="0" step="1" inputmode="numeric" placeholder="Ex. 150"></label><button type="button" class="btn ghost sm" data-action="suggest">Suggérer</button></div>
+        <div class="box suggest"><label class="field"><span>Prix d'achat (pour suggérer les prix)</span><span class="money"><input type="number" id="buy" min="0" step="1" inputmode="numeric" placeholder="Ex. 150"><span aria-hidden="true">€</span></span></label><button type="button" class="btn ghost sm" data-action="suggest">Suggérer</button></div>
         ${d.aiPriceFrom ? `<p class="box warnbox small">${icon("sparkle", 14)} Prix proposés par l'IA à partir d'un prix neuf estimé à ${euro(d.aiPriceFrom)}. <strong>Vérifie-les</strong> et corrige-les si besoin.</p>` : ""}
-        <p class="muted small">Remplis le prix des durées que tu acceptes ; laisse vide les autres. C'est ainsi que tu fixes ta durée minimale et maximale.</p>
-        <div class="four">
-          ${DURATIONS.map((x) => `<label class="field"><span>${x.label}</span><input type="number" name="p-${x.id}" min="1" step="1" inputmode="numeric" value="${d.prices[x.id] ?? ""}" placeholder="—"></label>`).join("")}
+        <div class="stack tight">
+          <strong>Prix de location, en euros</strong>
+          <p class="muted small">Indique un prix pour chaque durée que tu proposes. Laisse vide une durée que tu ne veux pas proposer (par exemple pas de location d'un mois).</p>
         </div>
-        <label class="field"><span>Caution *</span><input type="number" name="deposit" min="0" step="5" inputmode="numeric" value="${d.deposit}" required></label>
+        <div class="price-list">
+          ${DURATIONS.map((x) => `<label class="price-row"><span><strong>${x.label}</strong><span class="muted small block">${x.days} jours</span></span>
+            <span class="money"><input type="number" name="p-${x.id}" min="1" step="1" inputmode="numeric" value="${d.prices[x.id] ?? ""}" placeholder="—" aria-label="Prix pour ${x.label.toLowerCase()}, en euros"><span aria-hidden="true">€</span></span></label>`).join("")}
+        </div>
+        <label class="price-row"><span><strong>Caution *</strong><span class="muted small block">Bloquée puis rendue au retour</span></span>
+          <span class="money"><input type="number" name="deposit" min="0" step="5" inputmode="numeric" value="${d.deposit}" required aria-label="Caution, en euros"><span aria-hidden="true">€</span></span></label>
         <p class="muted small">Aïlo prélève ${pct(S.commissionFor(S.me().id))} sur le prix de location (moins quand tu loues beaucoup : ${tiersText()}). Le forfait nettoyage, l'envoi et la caution ne sont pas commissionnés.</p>
       </section>
 
       <section class="stack"><h2 class="h3">4. Remise, nettoyage, réservation</h2>
         <fieldset class="field"><legend>Modes de remise acceptés *</legend>
-          <label class="toggle"><input type="checkbox" name="hv" value="main" ${d.handover !== "envoi" ? "checked" : ""}><span>En main propre<span class="muted small block">Gratuit pour la locataire. Lieu et heure à convenir par message.</span></span></label>
+          <label class="toggle"><input type="checkbox" name="hv" value="main" ${d.handover === "main" || d.handover === "both" ? "checked" : ""}><span>En main propre<span class="muted small block">Gratuit pour la locataire. Lieu et heure à convenir par message.</span></span></label>
           <label class="toggle"><input type="checkbox" name="hv" value="envoi" ${d.handover === "envoi" || d.handover === "both" ? "checked" : ""}><span>Envoi en point relais<span class="muted small block">La locataire paie ${euro(SHIPPING_FEE)} aller-retour, à partir de ${euro(SHIPPING_MIN)} de location (plusieurs de tes pièces peuvent partir dans le même colis). Aïlo te fournit l'étiquette.</span></span></label>
         </fieldset>
         <label class="field"><span>Forfait nettoyage</span><input type="number" name="cleaningFee" min="0" step="1" value="${d.cleaningFee}"></label>
@@ -1357,7 +1362,7 @@ function maybeWelcome() {
   openSheet(`<h2 class="h2">Aïlo dans ta poche</h2>
     <p class="small">Deux petits réglages pour ne rater aucune demande ni aucun message.</p>
     <div class="welcome-steps">
-      ${needInstall ? `<div class="box row gap"><span class="ib-icon">${icon("download", 20)}</span><span class="grow"><strong>Installer l'application</strong><span class="small block muted">Une icône sur ton écran d'accueil, comme une vraie app.</span></span>
+      ${needInstall ? `<div class="box row gap"><span class="ib-icon">${icon("download", 20)}</span><span class="grow"><strong>Installer l'application</strong><span class="small block muted">Installe l'application sur ton écran d'accueil.</span></span>
         <button type="button" class="btn sm" data-action="welcome-install">Installer</button></div>` : ""}
       ${needNotif ? `<div class="box row gap"><span class="ib-icon">${icon("bell", 20)}</span><span class="grow"><strong>Activer les notifications</strong><span class="small block muted">${isIOS() && !isStandalone() ? "Sur iPhone : installe d'abord l'app, puis active-les depuis l'icône." : "Une alerte en haut de l'écran à chaque message ou réservation."}</span></span>
         ${isIOS() && !isStandalone() ? "" : `<button type="button" class="btn sm" data-action="welcome-notif">Activer</button>`}</div>` : ""}

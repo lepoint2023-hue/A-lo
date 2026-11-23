@@ -407,3 +407,12 @@ button.premium { border: 0; cursor: pointer; font-family: inherit; min-height: 2
 .guest-cta .btn { background: #fff; color: var(--accent); border-color: #fff; }
 body.has-guest-cta main, body.has-guest-cta #view { padding-bottom: 150px; }
 .radios.compact .radio { padding: 10px 12px; }
+/* v0.9.3 : prix en euros, lisibles */
+.price-list { display: grid; gap: 8px; }
+.price-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; }
+.money { display: inline-flex; align-items: center; gap: 6px; }
+.money input { width: 96px; text-align: right; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: 16px; background: #fff; }
+.field .money { display: flex; }
+.field .money input { width: 100%; }
+.money > span { font-weight: 600; color: var(--ink-2); }
+.stack.tight { gap: 2px; }
