@@ -709,7 +709,26 @@ function syncDraft(form) {
 }
 const num = (v) => (v === null || v === "" ? "" : Number(v));
 
-function submitItem(form, id) {
+// Vérification automatique avant publication : seulement des vêtements et accessoires, rien de choquant.
+// Renvoie null si c'est bon (ou si le service ne répond pas), sinon le message à afficher.
+async function moderate(d, existing) {
+  const fresh = d.photos.filter((p) => p.startsWith("data:")).slice(0, 4);
+  const textChanged = !existing || existing.title !== d.title || existing.description !== d.description;
+  if (!fresh.length && !textChanged) return null;
+  try {
+    const res = await fetch(aiEndpoint().replace(/\/analyse$/, "/moderer"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ images: fresh, text: `${d.title}. ${d.category}. ${d.description}` })
+    });
+    if (!res.ok) return null; // service indisponible : on n'empêche pas de publier (les signalements prennent le relais)
+    const m = await res.json();
+    if (m.ok !== false) return null;
+    if (m.explicit) return "Cette annonce ne peut pas être publiée : une photo ou le texte ne respecte pas les règles d'Aïlo." + (m.reason ? " " + m.reason : "");
+    return "Aïlo est réservée aux vêtements, chaussures, sacs et accessoires de mode." + (m.reason ? " " + m.reason : "") + " Si c'est une erreur, change la photo principale pour montrer la pièce entière.";
+  } catch (e) { return null; }
+}
+
+async function submitItem(form, id) {
   syncDraft(form);
   const d = ui.draft, err = document.getElementById("form-err");
   const missing = [];
@@ -723,10 +742,17 @@ function submitItem(form, id) {
   if (missing.length) return fail("Il manque : " + missing.join(", ") + ".");
   for (let k = 1; k < filled.length; k++) if (Number(d.prices[filled[k].id]) < Number(d.prices[filled[k - 1].id])) return fail("Le prix total doit augmenter avec la durée.");
   if (d.condition === "Bon état" && !d.defects.trim()) return fail("Pour une pièce en « bon état », décris les signes d'usure dans « Défauts ».");
+  if (!d.photos.length) return fail("Ajoute au moins une photo de la pièce.");
+  const btn = document.querySelector("[form=item-form], #item-form .bottombar .btn, .bottombar .btn");
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Vérification…"; }
+  const refused = await moderate(d, id ? S.item(id) : null);
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  if (refused) return fail(refused);
+  if (ui.draft !== d) return; // formulaire quitté pendant la vérification
   const data = Object.assign({}, d);
   delete data._for;
   delete data.aiPriceFrom;
-  if (!d.photos.length && !id) toast("Publiée sans photo : ajoute-en vite, c'est ce qui fait louer.");
   const newId = S.saveItem(data);
   ui.draft = null;
   toast(id ? "Enregistrement…" : "Publication en cours…");

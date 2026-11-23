@@ -4,7 +4,9 @@
 // toujours dans les listes imposées de l'app.
 //
 // Variable secrète à définir dans Cloudflare : OPENROUTER_API_KEY
-// Route : POST /analyse   corps JSON : { "images": ["data:image/jpeg;base64,...", ...] }
+// Routes : POST /analyse   corps JSON : { "images": ["data:image/jpeg;base64,...", ...] }
+//          POST /moderer   corps JSON : { "images": [...], "text": "titre + description" }
+//                          → { "ok": true|false, "clothing": bool, "explicit": bool, "reason": "..." }
 
 const ALLOWED_ORIGINS = ["https://lepoint2023-hue.github.io"];
 // Modèle OpenRouter qui lit les images, rapide et bon marché. Pour en changer : openrouter.ai/models (filtre « image » en entrée).
@@ -34,6 +36,37 @@ Règles :
 - description : 1 à 2 phrases en français, factuelles (coupe, matière apparente, détails visibles). Pas de superlatifs, pas d'état d'usure supposé.
 - estimatedValue : prix d'achat neuf approximatif en euros (nombre entier), estimé d'après le type de pièce et la marque si elle est lisible ; null si tu ne peux pas estimer.`;
 
+const MODERATION = `Tu es la modératrice d'Aïlo, une app belge où des particulières louent UNIQUEMENT des vêtements et accessoires de mode.
+On te donne les photos et le texte d'une annonce. Réponds UNIQUEMENT avec un objet JSON :
+{"clothing": true ou false, "explicit": true ou false, "reason": "une courte phrase en français"}
+- clothing = true si l'annonce propose un vêtement, des chaussures, un sac ou un accessoire de mode (bijou, chapeau, ceinture, foulard, nœud papillon…), porté ou non, sur cintre, mannequin ou à plat. Une photo d'étiquette ou de détail d'un vêtement compte aussi.
+- clothing = false pour tout autre objet ou service (meuble, instrument de musique, véhicule, électronique, décoration, animal, nourriture, logement…), ou si aucune photo ni aucun texte ne montre un vêtement.
+- explicit = true en cas de nudité, de contenu sexuel ou suggestif, de violence, d'arme ou de symbole haineux, sur une photo ou dans le texte.
+- reason : explique ta décision en une phrase simple, adressée à la personne qui publie.`;
+
+async function askModel(env, system, userText, images, maxTokens) {
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://lepoint2023-hue.github.io/A-lo/",
+      "X-Title": "Ailo"
+    },
+    body: JSON.stringify({
+      model: MODEL, temperature: 0, max_tokens: maxTokens, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: [{ type: "text", text: userText }, ...images.map((u) => ({ type: "image_url", image_url: { url: u } }))] }
+      ]
+    })
+  });
+  if (!r.ok) throw new Error("IA " + r.status);
+  const data = await r.json();
+  const txt = data.choices[0].message.content || "";
+  return JSON.parse((txt.match(/\{[\s\S]*\}/) || [txt])[0]);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
@@ -47,7 +80,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
     const url = new URL(request.url);
-    if (request.method !== "POST" || url.pathname !== "/analyse") return json({ error: "Introuvable" }, 404, cors);
+    if (request.method !== "POST" || !["/analyse", "/moderer"].includes(url.pathname)) return json({ error: "Introuvable" }, 404, cors);
     if (!allowed) return json({ error: "Origine non autorisée" }, 403, cors);
     if (Number(request.headers.get("Content-Length") || 0) > MAX_BODY) return json({ error: "Photos trop lourdes" }, 413, cors);
     if (!env.OPENROUTER_API_KEY) return json({ error: "Clé IA manquante sur le serveur" }, 500, cors);
@@ -56,7 +89,19 @@ export default {
     try { body = await request.json(); } catch { return json({ error: "Requête illisible" }, 400, cors); }
     const images = (Array.isArray(body.images) ? body.images : [])
       .filter((s) => typeof s === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(s))
-      .slice(0, 3);
+      .slice(0, url.pathname === "/moderer" ? 4 : 3);
+
+    if (url.pathname === "/moderer") {
+      const text = typeof body.text === "string" ? body.text.slice(0, 800) : "";
+      if (!images.length && !text.trim()) return json({ error: "Rien à vérifier" }, 400, cors);
+      try {
+        const m = await askModel(env, MODERATION, "Annonce : " + (text || "(pas de texte)"), images, 120);
+        const clothing = m.clothing !== false, explicit = m.explicit === true;
+        return json({ ok: clothing && !explicit, clothing, explicit, reason: typeof m.reason === "string" ? m.reason.slice(0, 200) : "" }, 200, cors);
+      } catch {
+        return json({ error: "Vérification indisponible" }, 502, cors);
+      }
+    }
     if (!images.length) return json({ error: "Aucune photo" }, 400, cors);
 
     let ai;
