@@ -114,7 +114,21 @@ const statusPill = (s) => `<span class="pill tone-${STATUS[s].tone}">${STATUS[s]
 const ownerBadge = (u) => (u.type === "boutique" ? `<span class="badge">${icon("shop", 12)} Boutique partenaire</span>` : u.type === "pro" ? `<span class="badge">Pro</span>` : "")
   + (S.isVedette(u.id) ? `<span class="badge vedette">${icon("star", 12)} Loueuse vedette</span>` : "");
 // Marque des options payantes au lancement
-const premiumTag = () => `<span class="premium" title="Option Premium">${icon("crown", 12)} Premium</span>`;
+// Avec une clé : étiquette cliquable (ⓘ) qui explique concrètement l'avantage
+const premiumTag = (k) => k
+  ? `<button type="button" class="premium" data-action="premium-info" data-k="${k}" aria-label="Option Premium : en savoir plus">${icon("crown", 12)} Premium ${icon("info", 13)}</button>`
+  : `<span class="premium">${icon("crown", 12)} Premium</span>`;
+const PREMIUM_INFO = {
+  follow: { title: "Suivre un profil", points: [
+    "Tu suis tes loueuses préférées, celles qui ont ta taille et ton style.",
+    "Tu reçois une notification dès qu'elles mettent une nouvelle pièce en ligne.",
+    "Tu réserves avant tout le monde les pièces les plus demandées (robes de cocktail, tenues de mariage…).",
+    "Tu retrouves toutes les loueuses suivies dans Profil → Profils suivis."] },
+  premium: { title: "L'abonnement Premium", points: [
+    "Suivre des profils et être prévenue de leurs nouvelles pièces.",
+    "Voir les statistiques de ce qui se loue le mieux autour de toi.",
+    "Mettre tes annonces en haut des résultats."] }
+};
 const betaFreeNote = () => BETA_FREE_PREMIUM ? `<p class="premium-note small">${icon("crown", 14)} <span><strong>Offert pendant la bêta.</strong> Au lancement d'Aïlo, cette option fera partie de l'abonnement Premium.</span></p>` : "";
 const pct = (r) => `${Math.round(r * 100)} %`;
 const tiersText = () => COMMISSION_TIERS.map((t, k) => k === 0 ? `${pct(t.rate)} de base` : `${pct(t.rate)} dès ${t.min} locations terminées`).join(", ");
@@ -450,7 +464,7 @@ function membre(id) {
         </div>
       <div class="tags">${ownerBadge(u)}</div>
       ${id !== S.me().id ? `<div class="follow-box box">
-        <div class="row gap"><div class="grow"><strong>${S.isFollowing(id) ? `Tu suis ${esc(u.name)}` : `Suivre ${esc(u.name)}`}</strong> ${premiumTag()}
+        <div class="row gap"><div class="grow"><strong>${S.isFollowing(id) ? `Tu suis ${esc(u.name)}` : `Suivre ${esc(u.name)}`}</strong> ${premiumTag("follow")}
           <span class="small block muted">${S.isFollowing(id) ? "Tu reçois une notification à chaque nouvelle pièce." : "Reçois une notification dès qu'une nouvelle pièce est en ligne."}</span></div>
           <button class="btn sm ${S.isFollowing(id) ? "ghost" : ""}" data-action="follow" data-id="${id}" aria-pressed="${S.isFollowing(id)}">${S.isFollowing(id) ? `${icon("check", 16)} Suivie` : "Suivre"}</button></div>
         ${betaFreeNote()}
@@ -490,6 +504,7 @@ function dressing() {
       <h1 class="h1">Mon dressing</h1>
       <div class="stats"><div><strong>${items.length}</strong><span>pièces</span></div><div><strong>${active}</strong><span>en location</span></div><div class="accent-bg"><strong>${euro(S.earnings())}</strong><span>gains prévus</span></div></div>
       ${tierBox()}
+      ${S.followersCount(S.me().id) ? `<button class="box row gap followers-line" data-action="followers">${icon("heart", 18)}<span class="grow"><strong>${S.followersCount(S.me().id)} personne${S.followersCount(S.me().id) > 1 ? "s suivent" : " suit"} ton dressing</strong><span class="small block muted">${S.followersCount(S.me().id) > 1 ? "Elles sont prévenues" : "Elle est prévenue"} de chaque nouvelle pièce.</span></span>${icon("chevron", 16)}</button>` : ""}
       ${pending ? `<a class="box alert" href="#/locations" data-action="tab-loue">${pending} demande${pending > 1 ? "s" : ""} de location en attente ${icon("chevron", 16)}</a>` : ""}
       <div class="chips">${["", ...cats].map((c) => `<button class="chip ${ui.dressFilter === c ? "on" : ""}" data-action="dress-filter" data-c="${esc(c)}" aria-pressed="${ui.dressFilter === c}">${c || "Tout"}</button>`).join("")}</div>
       <div class="grid3">
@@ -821,6 +836,7 @@ function profil() {
       <nav class="box list menu" aria-label="Mon compte">
         <a href="#/profil/modifier"><span>Modifier mon profil</span><span class="muted">${icon("chevron", 16)}</span></a>
         ${isStandalone() ? "" : `<button data-action="install"><span>Installer l'application</span><span class="muted">${icon("chevron", 16)}</span></button>`}
+        <button data-action="followers"><span>Mes abonnées</span><span class="muted">${S.followersCount(S.me().id)} ${icon("chevron", 16)}</span></button>
         <button data-action="followed"><span>Profils suivis ${premiumTag()}</span><span class="muted">${S.following().length} ${icon("chevron", 16)}</span></button>
         <button data-action="share" data-kind="membre" data-id="${S.me().id}"><span>Partager mon dressing</span><span class="muted">${icon("chevron", 16)}</span></button>
         <button data-action="notif-on"><span>Notifications</span><span class="muted">${"Notification" in window && Notification.permission === "granted" ? "Activées" : "Activer"} ${icon("chevron", 16)}</span></button>
@@ -1002,7 +1018,7 @@ const actions = {
     openSheet(`<h2 class="h2">Abonnements</h2><p class="muted small">Contenu à définir — proposition.</p>
       <div class="plans">
         <div class="box"><strong>Base · gratuit</strong><p class="small">Publier et louer. Commission dégressive : ${tiersText()}.</p></div>
-        <div class="box accent-border"><strong>Premium</strong> ${premiumTag()}<p class="small">Suivre des profils et être prévenue de leurs nouvelles pièces, statistiques de ce qui se loue, annonces en haut de page.</p>${betaFreeNote()}</div>
+        <div class="box accent-border"><strong>Premium</strong> ${premiumTag("premium")}<p class="small">Suivre des profils et être prévenue de leurs nouvelles pièces, statistiques de ce qui se loue, annonces en haut de page.</p>${betaFreeNote()}</div>
         <div class="box"><strong>Pro</strong><p class="small">Pour les professionnelles : badge Pro, annonces illimitées, page vitrine.</p></div>
       </div>`);
   },
@@ -1063,9 +1079,22 @@ const actions = {
   },
   followed() {
     const ids = S.following();
-    openSheet(`<h2 class="h2">Profils suivis ${premiumTag()}</h2>${betaFreeNote()}
+    openSheet(`<h2 class="h2">Profils suivis ${premiumTag("follow")}</h2>${betaFreeNote()}
       ${ids.length ? `<div class="box list">${ids.map((id) => { const u = S.user(id); return `<a class="li plain" href="#/membre/${id}" onclick="document.getElementById('sheet').close()"><span class="row gap">${avatar(u, "sm")} ${esc(u.name)}</span><span class="muted small">${esc(u.city)}</span></a>`; }).join("")}</div>`
         : `<p class="muted small">Tu ne suis encore personne. Sur la page d'une loueuse, touche « Suivre » pour être prévenue de ses nouvelles pièces.</p>`}`);
+  },
+  followers() {
+    const ids = S.followers(S.me().id);
+    openSheet(`<h2 class="h2">Mes abonnées</h2>
+      ${ids.length ? `<p class="small">Ces personnes suivent ton dressing : elles reçoivent une notification à chaque nouvelle pièce que tu publies.</p>
+        <div class="box list">${ids.map((id) => { const u = S.user(id); return `<a class="li plain" href="#/membre/${id}" onclick="document.getElementById('sheet').close()"><span class="row gap">${avatar(u, "sm")} ${esc(u.name)}</span><span class="muted small">${esc(u.city)}</span></a>`; }).join("")}</div>`
+        : `<p class="muted small">Personne ne suit encore ton dressing. Partage-le (Profil → Partager mon dressing) et publie régulièrement : chaque nouvelle pièce prévient tes abonnées.</p>`}`);
+  },
+  "premium-info"(el) {
+    const p = PREMIUM_INFO[el.dataset.k] || PREMIUM_INFO.premium;
+    openSheet(`<h2 class="h2">${icon("crown", 20)} ${esc(p.title)}</h2>
+      <ul class="premium-points">${p.points.map((x) => `<li>${icon("check", 16)} <span>${esc(x)}</span></li>`).join("")}</ul>
+      ${betaFreeNote()}`);
   },
   tiers() {
     const me = S.me().id;

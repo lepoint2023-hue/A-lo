@@ -394,3 +394,8 @@ img.avatar { object-fit: cover; }
 .tier { display: grid; gap: 10px; width: 100%; text-align: left; cursor: pointer; font: inherit; color: var(--ink); }
 .tier .bar { display: block; height: 6px; border-radius: 3px; background: var(--sand); overflow: hidden; }
 .tier .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+button.premium { border: 0; cursor: pointer; font-family: inherit; min-height: 24px; }
+.premium-points { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 10px; }
+.premium-points li { display: flex; gap: 8px; align-items: flex-start; }
+.premium-points svg { flex: none; color: var(--accent); margin-top: 2px; }
+.followers-line { width: 100%; text-align: left; font: inherit; color: var(--ink); cursor: pointer; align-items: center; }

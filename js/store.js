@@ -218,7 +218,7 @@ export function sync() {
     const ids = new Set([uid]);
     items.data.forEach((i) => ids.add(i.owner_id));
     resas.data.forEach((r) => { ids.add(r.owner_id); ids.add(r.renter_id); });
-    if (!follows.error) follows.data.forEach((f) => { if (f.follower_id === uid) ids.add(f.followed_id); });
+    if (!follows.error) follows.data.forEach((f) => { if (f.follower_id === uid) ids.add(f.followed_id); if (f.followed_id === uid) ids.add(f.follower_id); });
     const threads = [...new Set(resas.data.map((r) => r.thread_id))];
     const [profs, revs, msgs] = await Promise.all([
       sb.from("profiles").select("*").in("id", [...ids]),
@@ -342,6 +342,7 @@ export const payoutFor = (r) => round(r.price * (1 - rateOf(r)) + r.cleaningFee)
 // ---------- Suivre un profil ----------
 export const isFollowing = (uid) => db.follows.some((f) => f.follower_id === db.me && f.followed_id === uid);
 export const followersCount = (uid) => db.follows.filter((f) => f.followed_id === uid).length;
+export const followers = (uid) => db.follows.filter((f) => f.followed_id === uid).map((f) => f.follower_id);
 export const following = () => db.follows.filter((f) => f.follower_id === db.me).map((f) => f.followed_id);
 export function toggleFollow(uid) {
   if (isFollowing(uid)) {

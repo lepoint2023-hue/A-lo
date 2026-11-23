@@ -3,6 +3,7 @@
 //   GET  /ailo/vapid   → clé publique pour s'abonner aux notifications
 //   POST /ailo/push    → appelée par la base à chaque nouveau message
 //   POST /ailo/follow  → appelée par la base à chaque nouvelle pièce (abonnées)
+//   POST /ailo/followed → appelée par la base quand quelqu'un suit une loueuse
 //   POST /ailo/pay     → crée la page de paiement Stripe d'une location
 //   POST /ailo/stripe  → Stripe confirme le paiement (webhook)
 // Aucune dépendance. Secrets facultatifs : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
@@ -189,6 +190,20 @@ async function handleFollow(req: Request) {
   return json({ sent: results.filter((x) => x.status === "fulfilled").length });
 }
 
+async function handleFollowed(req: Request) {
+  const secret = await getSecret("hook_secret");
+  if (!secret || req.headers.get("x-ailo-hook") !== secret) return json({ error: "forbidden" }, 403);
+  const { follower_id, followed_id } = await req.json();
+  const [p, subs] = await Promise.all([
+    rest(`profiles?id=eq.${follower_id}&select=name`),
+    rest(`push_subscriptions?user_id=eq.${followed_id}&select=endpoint,p256dh,auth`)
+  ]);
+  const name = (p && p[0] && p[0].name) || "Quelqu'un";
+  const data = { title: "Nouvelle abonnée", body: `${name} suit ton dressing : elle sera prévenue de tes nouvelles pièces.`, url: `${APP_URL}#/dressing`, tag: `ailo-follower-${follower_id}` };
+  const results = await Promise.allSettled((subs || []).map((s: any) => sendPush(s, data)));
+  return json({ sent: results.filter((x) => x.status === "fulfilled").length });
+}
+
 // ---------- Stripe ----------
 const cents = (n: number) => Math.round(Number(n || 0) * 100);
 async function handlePay(req: Request) {
@@ -286,6 +301,7 @@ export async function handler(req: Request): Promise<Response> {
     if (req.method === "GET" && path.endsWith("/vapid")) res = json({ key: (await vapid()).pub });
     else if (req.method === "POST" && path.endsWith("/push")) res = await handlePush(req);
     else if (req.method === "POST" && path.endsWith("/follow")) res = await handleFollow(req);
+    else if (req.method === "POST" && path.endsWith("/followed")) res = await handleFollowed(req);
     else if (req.method === "POST" && path.endsWith("/pay")) res = await handlePay(req);
     else if (req.method === "POST" && path.endsWith("/stripe")) res = await handleStripe(req);
     else if (req.method === "GET") res = json({ ok: true, stripe: !!env("STRIPE_SECRET_KEY"), webhook: !!env("STRIPE_WEBHOOK_SECRET") });
