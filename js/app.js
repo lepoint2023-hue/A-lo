@@ -136,7 +136,7 @@ function card(i) {
 }
 
 // Présentation des résultats, choisie par chacune et gardée sur l'appareil
-const VIEWS = [["large", "Grandes photos"], ["grid", "Grille"], ["small", "Petites photos"], ["list", "Liste"]];
+const VIEWS = [["large", "Grandes photos", "Grand"], ["grid", "Grille de deux", "Grille"], ["small", "Petites photos", "Petit"], ["list", "Liste", "Liste"]];
 const grid = (items) => `<div class="grid2 grid-${ui.view}">${items.map(card).join("")}</div>`;
 const empty = (title, text, cta = "") => `<div class="empty"><p class="empty-title">${title}</p><p class="muted">${text}</p>${cta}</div>`;
 const statusPill = (s) => `<span class="pill tone-${STATUS[s].tone}">${STATUS[s].label}</span>`;
@@ -311,7 +311,7 @@ function occasionBanner(current) {
 }
 function decouvrir() {
   const f = ui.filters, n = activeFilterCount(), u = S.me();
-  const seg = [["tout", "Toutes les pièces"], ["categorie", "Par catégorie"], ["theme", "Par occasion"], ["profil", "Par loueuse"]];
+  const seg = [["tout", "Aucun"], ["categorie", "Par catégorie"], ["theme", "Par occasion"], ["profil", "Par loueuse"]];
   return {
     tab: "decouvrir",
     html: `<div class="page">
@@ -335,8 +335,9 @@ function decouvrir() {
       ${lookalikeHTML()}
       ${forYouHTML()}
       <div class="toolbar">
-        <label class="group-by"><span class="sr">Regrouper</span><select id="group-by" aria-label="Regrouper les résultats">${seg.map(([k, l]) => `<option value="${k}" ${ui.groupBy === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-        <div class="views" role="group" aria-label="Présentation">${VIEWS.map(([k, l]) => `<button data-action="view" data-v="${k}" aria-pressed="${ui.view === k}" aria-label="${l}" title="${l}">${icon("view-" + k, 18)}</button>`).join("")}</div>
+        <label class="tool"><span class="tool-cap">Regrouper</span><select id="group-by">${seg.map(([k, l]) => `<option value="${k}" ${ui.groupBy === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <div class="tool"><span class="tool-cap" id="views-cap">Affichage</span>
+          <div class="views" role="group" aria-labelledby="views-cap">${VIEWS.map(([k, l, short]) => `<button data-action="view" data-v="${k}" aria-pressed="${ui.view === k}" aria-label="${l}">${icon("view-" + k, 16)}<span>${short}</span></button>`).join("")}</div></div>
       </div>
       <div id="results" class="view-${ui.view}">${resultsHTML()}</div>
     </div>
