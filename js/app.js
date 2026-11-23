@@ -1111,6 +1111,7 @@ const actions = {
   follow(el) {
     if (S.isGuest()) return needAccount("Crée ton compte pour suivre cette loueuse.");
     const id = el.dataset.id;
+    if (!BETA_FREE_PREMIUM && !S.isPremium() && !S.isFollowing(id)) return actions["premium-info"]({ dataset: { k: "follow" } });
     const on = S.toggleFollow(id);
     toast(on ? `Tu suis ${S.user(id).name} : tu seras prévenue de ses nouvelles pièces.` : `Tu ne suis plus ${S.user(id).name}.`);
     if (on && "Notification" in window && Notification.permission === "default") setTimeout(() => actions["notif-on"](), 600);
@@ -1133,8 +1134,9 @@ const actions = {
     const p = PREMIUM_INFO[el.dataset.k] || PREMIUM_INFO.premium;
     openSheet(`<h2 class="h2">${icon("crown", 20)} ${esc(p.title)}</h2>
       <ul class="premium-points">${p.points.map((x) => `<li>${icon("check", 16)} <span>${esc(x)}</span></li>`).join("")}</ul>
-      ${betaFreeNote()}`);
+      ${S.isPremium() ? `<p class="box note small">${icon("check", 14)} Tu as déjà accès à cette option.</p>` : BETA_FREE_PREMIUM ? betaFreeNote() : `<button type="button" class="btn" data-action="subscribe">${icon("crown", 16)} Passer à Premium</button>`}`);
   },
+  subscribe() { toast("L'abonnement en ligne arrive avec le paiement Stripe."); },
   tiers() {
     const me = S.me().id;
     openSheet(`<h2 class="h2">Bonus gros loueur</h2>

@@ -278,6 +278,8 @@ async function write(promiseFn, failMsg) {
 function guestPlace() { try { return JSON.parse(localStorage.getItem("ailo-guest-place") || "null"); } catch (e) { return null; } }
 export function setGuestPlace(p) { try { localStorage.setItem("ailo-guest-place", JSON.stringify(p)); } catch (e) { /* ignore */ } }
 export const isGuest = () => !session;
+// Accès Premium : forfait payant (mis à jour par Stripe côté serveur) ou compte administrateur
+export const isPremium = () => ["premium", "pro", "partenaire"].includes(me().plan);
 export const me = () => db.users[db.me] || Object.assign({ id: null, name: "", city: "", zip: "", lat: null, lng: null, reviews: 0, rating: null }, (!session && guestPlace()) || {});
 export const user = (id) => db.users[id] || { id, name: "Membre", city: "", reviews: 0, rating: null };
 export const item = (id) => db.items.find((i) => i.id === id);
