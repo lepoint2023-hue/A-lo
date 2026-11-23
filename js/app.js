@@ -20,7 +20,8 @@ const ui = {
   booking: {},   // itemId -> { durationId, start, cleaning, handover, extras: [], useCredit }
   draft: null,   // pièce en cours d'édition
   place: null,   // commune choisie dans un sélecteur
-  authReason: "" // pourquoi on demande de se connecter
+  authReason: "", // pourquoi on demande de se connecter
+  view: (() => { try { return localStorage.getItem("ailo-view") || "grid"; } catch (e) { return "grid"; } })()
 };
 
 // ---------------------------------------------------------------- Routeur
@@ -134,7 +135,9 @@ function card(i) {
   </article>`;
 }
 
-const grid = (items) => `<div class="grid2">${items.map(card).join("")}</div>`;
+// Présentation des résultats, choisie par chacune et gardée sur l'appareil
+const VIEWS = [["large", "Grandes photos"], ["grid", "Grille"], ["small", "Petites photos"], ["list", "Liste"]];
+const grid = (items) => `<div class="grid2 grid-${ui.view}">${items.map(card).join("")}</div>`;
 const empty = (title, text, cta = "") => `<div class="empty"><p class="empty-title">${title}</p><p class="muted">${text}</p>${cta}</div>`;
 const statusPill = (s) => `<span class="pill tone-${STATUS[s].tone}">${STATUS[s].label}</span>`;
 const ownerBadge = (u) => (u.type === "boutique" ? `<span class="badge">${icon("shop", 12)} Boutique partenaire</span>` : u.type === "pro" ? `<span class="badge">Pro</span>` : "")
@@ -302,13 +305,13 @@ const OCCASION_BANNERS = {
   "Tous les jours": { kicker: "Tous les jours", title: "Le dressing du quotidien", text: "Des pièces faciles à porter, pour changer de style", bg: "#EFEBE4, #E4DED4" }
 };
 function occasionBanner(current) {
-  // Titre de la sélection, non cliquable : on choisit l'occasion avec les pastilles en dessous
-  const o = OCCASION_BANNERS[current] || { kicker: "Toutes les occasions", title: "Une tenue pour chaque événement", text: "Choisis une occasion ci-dessous pour affiner", bg: "#F3EBDA, #E9DCCF" };
-  return `<div class="wedding" style="background:linear-gradient(135deg, ${o.bg})"><span class="wedding-kicker">${esc(o.kicker)}</span><strong>${esc(o.title)}</strong><span>${esc(o.text)}</span></div>`;
+  // Bandeau fin, non cliquable : rappelle la sélection en cours
+  const o = OCCASION_BANNERS[current] || { kicker: "Toutes les occasions", title: "Une tenue pour chaque événement", bg: "#F3EBDA, #E9DCCF" };
+  return `<p class="occ-strip" style="background:linear-gradient(135deg, ${o.bg})"><strong>${esc(o.kicker)}</strong> · ${esc(o.title)}</p>`;
 }
 function decouvrir() {
   const f = ui.filters, n = activeFilterCount(), u = S.me();
-  const seg = [["tout", "Tout"], ["categorie", "Catégorie"], ["theme", "Thématique"], ["profil", "Profil"]];
+  const seg = [["tout", "Toutes les pièces"], ["categorie", "Par catégorie"], ["theme", "Par occasion"], ["profil", "Par loueuse"]];
   return {
     tab: "decouvrir",
     html: `<div class="page">
@@ -326,15 +329,16 @@ function decouvrir() {
       ${S.isGuest() && !u.city
         ? `<button class="where" data-action="guest-place">${icon("pin", 16)} <span><strong>Choisis ta commune</strong> pour voir les pièces près de chez toi</span></button>`
         : `<button class="where" data-action="${S.isGuest() ? "guest-place" : "open-filters"}">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>`}
-      <div class="label-caps">Afficher par</div>
-      <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
-      ${occasionBanner(f.occasion)}
       <div class="chips">${["", ...OCCASIONS].map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o || "Toutes"}</button>`).join("")}</div>
+      ${occasionBanner(f.occasion)}
       <input type="file" accept="image/*" id="search-photo" class="sr" aria-label="Choisir une photo d'inspiration">
       ${lookalikeHTML()}
       ${forYouHTML()}
-      <div class="section-head"><h2 class="h2">${f.occasion ? `Occasion : ${esc(f.occasion)}` : "Près de chez toi"}</h2></div>
-      <div id="results">${resultsHTML()}</div>
+      <div class="toolbar">
+        <label class="group-by"><span class="sr">Regrouper</span><select id="group-by" aria-label="Regrouper les résultats">${seg.map(([k, l]) => `<option value="${k}" ${ui.groupBy === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <div class="views" role="group" aria-label="Présentation">${VIEWS.map(([k, l]) => `<button data-action="view" data-v="${k}" aria-pressed="${ui.view === k}" aria-label="${l}" title="${l}">${icon("view-" + k, 18)}</button>`).join("")}</div>
+      </div>
+      <div id="results" class="view-${ui.view}">${resultsHTML()}</div>
     </div>
     ${filtersSheet()}`,
     mount() {
@@ -964,6 +968,7 @@ const actions = {
   back: () => back("#/"),
   fav(el) { if (S.isGuest()) return needAccount("Crée ton compte pour garder tes coups de cœur."); S.toggleFav(el.dataset.id); if (S.isFav(el.dataset.id)) taste.add(S.item(el.dataset.id), 2); route(true); },
   group(el) { ui.groupBy = el.dataset.k; route(true); },
+  view(el) { ui.view = el.dataset.v; try { localStorage.setItem("ailo-view", ui.view); } catch (e) { /* ignore */ } route(true); },
   occasion(el) { const o = el.dataset.o; ui.filters.occasion = o && ui.filters.occasion !== o ? o : ""; route(true); },
   "open-filters"() {
     const dlg = document.getElementById("filters");
@@ -1293,6 +1298,7 @@ document.addEventListener("change", async (e) => {
     updateBooking(id);
     return;
   }
+  if (t.id === "group-by") { ui.groupBy = t.value; route(true); return; }
   if (t.id === "search-photo") {
     const f = t.files[0]; t.value = "";
     if (f) await photoSearch(f);

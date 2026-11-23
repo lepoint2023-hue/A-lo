@@ -419,3 +419,34 @@ body.has-guest-cta main, body.has-guest-cta #view { padding-bottom: 150px; }
 .wedding.chosen { cursor: default; }
 .wedding.chosen .linkbtn { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 13px; color: var(--accent); }
 .wedding.chosen > span:nth-child(3) { color: var(--ink-2); font-size: 14px; }
+
+/* v0.9.8 : bandeau d'occasion compact, regroupement et présentation des résultats */
+.occ-strip { margin: 0; padding: 8px 12px; border-radius: 12px; font-size: 13px; color: var(--ink-2); box-shadow: inset 0 0 0 1px rgba(0,0,0,.05); }
+.occ-strip strong { color: var(--accent); }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.group-by select { min-height: 36px; padding: 0 30px 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); font: inherit; font-size: 14px; color: var(--ink); }
+.views { display: flex; gap: 2px; background: var(--sand); border-radius: 18px; padding: 3px; }
+.views button { width: 36px; height: 32px; border: 0; border-radius: 15px; background: transparent; color: #6b665d; display: grid; place-items: center; cursor: pointer; }
+.views button[aria-pressed="true"] { background: var(--paper); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+/* Grandes photos : une colonne */
+.grid-large { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+.grid-large .card h3 { font-size: 16px; }
+/* Petites photos : trois colonnes */
+.grid-small { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 8px; }
+.grid-small .card h3 { font-size: 12px; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.grid-small .card .small { font-size: 11px; }
+.grid-small .card .price { font-size: 12px; }
+.grid-small .fav { width: 28px; height: 28px; top: 6px; right: 6px; }
+.grid-small .tag-instant, .grid-small .tag-ship { display: none; }
+/* Liste : petite photo à gauche, infos à droite */
+.grid-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.grid-list .card { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
+.grid-list .card-link { display: grid; grid-template-columns: 84px 1fr; column-gap: 12px; align-content: start; padding-right: 36px; }
+.grid-list .card-ph { grid-row: 1 / span 3; border-radius: 10px; }
+.grid-list .card h3 { margin-top: 2px; }
+.grid-list .fav { top: 8px; right: 8px; width: 32px; height: 32px; box-shadow: none; }
+.grid-list .tag-instant, .grid-list .tag-ship { display: none; }
+/* Regroupements (rangées défilantes) selon la présentation */
+.view-large .hscroll { grid-auto-columns: 78%; }
+.view-small .hscroll { grid-auto-columns: 30%; }
+.view-small .hscroll .card h3 { font-size: 12px; }
