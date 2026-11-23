@@ -1,6 +1,6 @@
 // Aïlo — service worker : l'app s'ouvre même hors connexion.
 // Change VERSION à chaque mise en ligne pour forcer la mise à jour.
-const VERSION = "ailo-v0.9.5";
+const VERSION = "ailo-v0.9.6";
 const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/store.js", "js/data.js", "js/ui.js", "js/geo.js", "js/config.js", "data/places.json", "vendor/supabase-2.119.2.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

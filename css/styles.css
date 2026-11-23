@@ -416,3 +416,6 @@ body.has-guest-cta main, body.has-guest-cta #view { padding-bottom: 150px; }
 .field .money input { width: 100%; }
 .money > span { font-weight: 600; color: var(--ink-2); }
 .stack.tight { gap: 2px; }
+.wedding.chosen { cursor: default; }
+.wedding.chosen .linkbtn { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 13px; color: var(--accent); }
+.wedding.chosen > span:nth-child(3) { color: var(--ink-2); font-size: 14px; }

@@ -291,6 +291,25 @@ function resultsHTML() {
   }).join("");
 }
 
+// Encart d'occasion : « Spécial mariage » par défaut, puis celui de l'occasion choisie
+const OCCASION_BANNERS = {
+  "Mariage": { kicker: "Spécial mariage", title: "Invitée, témoin ou mariée", text: "Toutes les tenues pour le grand jour", bg: "#F3EBDA, #E9DCCF" },
+  "Soirée": { kicker: "Soirée", title: "Briller jusqu'au bout de la nuit", text: "Robes, combinaisons et vestes habillées", bg: "#E4E1F0, #D6D2E8" },
+  "Cocktail": { kicker: "Cocktail", title: "Élégante sans en faire trop", text: "Robes courtes, ensembles et accessoires", bg: "#F6E1DC, #EDD0C9" },
+  "Gala": { kicker: "Gala", title: "Le grand soir", text: "Robes longues, costumes et smokings", bg: "#E2E6EC, #D3D9E2" },
+  "Communion": { kicker: "Communion", title: "Une tenue pour la fête de famille", text: "Des tenues claires et élégantes", bg: "#EEF2E6, #E0E8D5" },
+  "Baptême": { kicker: "Baptême", title: "Pour accueillir le petit dernier", text: "Des tenues douces et chics pour la cérémonie", bg: "#E5EEF2, #D6E5EC" },
+  "Tous les jours": { kicker: "Tous les jours", title: "Le dressing du quotidien", text: "Des pièces faciles à porter, pour changer de style", bg: "#EFEBE4, #E4DED4" }
+};
+function occasionBanner(current) {
+  const o = OCCASION_BANNERS[current || "Mariage"];
+  if (!o) return "";
+  const style = `style="background:linear-gradient(135deg, ${o.bg})"`;
+  return current
+    ? `<div class="wedding chosen" ${style}><span class="wedding-kicker">${esc(o.kicker)}</span><strong>${esc(o.title)}</strong><span>${esc(o.text)}</span>
+        <button class="linkbtn small" data-action="occasion" data-o="${esc(current)}">${icon("close", 14)} Voir toutes les occasions</button></div>`
+    : `<button class="wedding" data-action="occasion" data-o="Mariage" ${style}><span class="wedding-kicker">${esc(o.kicker)}</span><strong>${esc(o.title)}</strong><span>${esc(o.text)} ${icon("chevron", 16)}</span></button>`;
+}
 function decouvrir() {
   const f = ui.filters, n = activeFilterCount(), u = S.me();
   const seg = [["tout", "Tout"], ["categorie", "Catégorie"], ["theme", "Thématique"], ["profil", "Profil"]];
@@ -313,7 +332,7 @@ function decouvrir() {
         : `<button class="where" data-action="${S.isGuest() ? "guest-place" : "open-filters"}">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>`}
       <div class="label-caps">Afficher par</div>
       <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
-      ${f.occasion === "Mariage" ? "" : `<button class="wedding" data-action="occasion" data-o="Mariage"><span class="wedding-kicker">Spécial mariage</span><strong>Invitée, témoin ou mariée</strong><span>Toutes les tenues pour le grand jour ${icon("chevron", 16)}</span></button>`}
+      ${occasionBanner(f.occasion)}
       <div class="chips">${OCCASIONS.map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o}</button>`).join("")}</div>
       <input type="file" accept="image/*" id="search-photo" class="sr" aria-label="Choisir une photo d'inspiration">
       ${lookalikeHTML()}
