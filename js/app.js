@@ -490,7 +490,9 @@ function updateBooking(id) {
 // ---------------------------------------------------------------- Profil d'une loueuse
 function membre(id) {
   const u = S.user(id);
-  const items = S.catalog({}).filter((i) => i.ownerId === id);
+  const self = id === S.me().id;
+  // Sa propre page : on voit ce que les autres voient (les pièces en ligne), y compris les siennes
+  const items = self ? S.myItems().filter((i) => i.status === "online" && S.offeredDurations(i).length) : S.catalog({}).filter((i) => i.ownerId === id);
   const plans = { pro: "Pro", partenaire: "Boutique partenaire" };
   return {
     tab: "decouvrir", title: u.name,
@@ -511,8 +513,9 @@ function membre(id) {
         ${S.followersCount(id) ? `<p class="muted small">${S.followersCount(id)} abonnée${S.followersCount(id) > 1 ? "s" : ""}</p>` : ""}
       </div>` : ""}
       ${id !== S.me().id ? `<button class="linkbtn report-link" data-action="report" data-kind="membre" data-id="${id}">Signaler ce profil</button>` : ""}
-      <h2 class="h2">Son dressing <span class="muted small">${items.length} pièce${items.length > 1 ? "s" : ""}</span></h2>
-      ${items.length ? grid(items) : empty("Rien à louer pour l'instant", "Repasse plus tard.")}
+      ${self ? `<p class="box note small">C'est ta page publique : voici ce que voient les personnes à qui tu partages ton dressing.</p>` : ""}
+      <h2 class="h2">${self ? "Ton dressing" : "Son dressing"} <span class="muted small">${items.length} pièce${items.length > 1 ? "s" : ""}</span></h2>
+      ${items.length ? grid(items) : self ? empty("Aucune pièce en ligne", "Les pièces en pause ou sans prix n'apparaissent pas ici.", `<a class="btn" href="#/dressing">Mon dressing</a>`) : empty("Rien à louer pour l'instant", "Repasse plus tard.")}
     </div>`
   };
 }
