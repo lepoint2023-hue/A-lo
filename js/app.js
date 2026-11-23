@@ -302,13 +302,9 @@ const OCCASION_BANNERS = {
   "Tous les jours": { kicker: "Tous les jours", title: "Le dressing du quotidien", text: "Des pièces faciles à porter, pour changer de style", bg: "#EFEBE4, #E4DED4" }
 };
 function occasionBanner(current) {
-  const o = OCCASION_BANNERS[current || "Mariage"];
-  if (!o) return "";
-  const style = `style="background:linear-gradient(135deg, ${o.bg})"`;
-  return current
-    ? `<div class="wedding chosen" ${style}><span class="wedding-kicker">${esc(o.kicker)}</span><strong>${esc(o.title)}</strong><span>${esc(o.text)}</span>
-        <button class="linkbtn small" data-action="occasion" data-o="${esc(current)}">${icon("close", 14)} Voir toutes les occasions</button></div>`
-    : `<button class="wedding" data-action="occasion" data-o="Mariage" ${style}><span class="wedding-kicker">${esc(o.kicker)}</span><strong>${esc(o.title)}</strong><span>${esc(o.text)} ${icon("chevron", 16)}</span></button>`;
+  // Titre de la sélection, non cliquable : on choisit l'occasion avec les pastilles en dessous
+  const o = OCCASION_BANNERS[current] || { kicker: "Toutes les occasions", title: "Une tenue pour chaque événement", text: "Choisis une occasion ci-dessous pour affiner", bg: "#F3EBDA, #E9DCCF" };
+  return `<div class="wedding" style="background:linear-gradient(135deg, ${o.bg})"><span class="wedding-kicker">${esc(o.kicker)}</span><strong>${esc(o.title)}</strong><span>${esc(o.text)}</span></div>`;
 }
 function decouvrir() {
   const f = ui.filters, n = activeFilterCount(), u = S.me();
@@ -333,7 +329,7 @@ function decouvrir() {
       <div class="label-caps">Afficher par</div>
       <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
       ${occasionBanner(f.occasion)}
-      <div class="chips">${OCCASIONS.map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o}</button>`).join("")}</div>
+      <div class="chips">${["", ...OCCASIONS].map((o) => `<button class="chip ${f.occasion === o ? "on" : ""}" data-action="occasion" data-o="${o}" aria-pressed="${f.occasion === o}">${o || "Toutes"}</button>`).join("")}</div>
       <input type="file" accept="image/*" id="search-photo" class="sr" aria-label="Choisir une photo d'inspiration">
       ${lookalikeHTML()}
       ${forYouHTML()}
@@ -968,7 +964,7 @@ const actions = {
   back: () => back("#/"),
   fav(el) { if (S.isGuest()) return needAccount("Crée ton compte pour garder tes coups de cœur."); S.toggleFav(el.dataset.id); if (S.isFav(el.dataset.id)) taste.add(S.item(el.dataset.id), 2); route(true); },
   group(el) { ui.groupBy = el.dataset.k; route(true); },
-  occasion(el) { ui.filters.occasion = ui.filters.occasion === el.dataset.o ? "" : el.dataset.o; route(true); },
+  occasion(el) { const o = el.dataset.o; ui.filters.occasion = o && ui.filters.occasion !== o ? o : ""; route(true); },
   "open-filters"() {
     const dlg = document.getElementById("filters");
     const form = document.getElementById("filters-form");
