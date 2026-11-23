@@ -2,6 +2,7 @@
 // Aïlo — fonction serveur (Supabase Edge Function « ailo »)
 //   GET  /ailo/vapid   → clé publique pour s'abonner aux notifications
 //   POST /ailo/push    → appelée par la base à chaque nouveau message
+//   POST /ailo/follow  → appelée par la base à chaque nouvelle pièce (abonnées)
 //   POST /ailo/pay     → crée la page de paiement Stripe d'une location
 //   POST /ailo/stripe  → Stripe confirme le paiement (webhook)
 // Aucune dépendance. Secrets facultatifs : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
@@ -170,6 +171,24 @@ async function handlePush(req: Request) {
   return json({ sent: results.filter((x) => x.status === "fulfilled").length });
 }
 
+async function handleFollow(req: Request) {
+  const secret = await getSecret("hook_secret");
+  if (!secret || req.headers.get("x-ailo-hook") !== secret) return json({ error: "forbidden" }, 403);
+  const { item_id, owner_id } = await req.json();
+  const fol = await rest(`follows?followed_id=eq.${owner_id}&select=follower_id`);
+  if (!fol || !fol.length) return json({ sent: 0 });
+  const [it, p] = await Promise.all([
+    rest(`items?id=eq.${item_id}&select=title,size`),
+    rest(`profiles?id=eq.${owner_id}&select=name`)
+  ]);
+  const name = (p && p[0] && p[0].name) || "une loueuse que tu suis";
+  const item = (it && it[0]) || { title: "Nouvelle pièce", size: "" };
+  const subs = await rest(`push_subscriptions?user_id=in.(${fol.map((f: any) => f.follower_id).join(",")})&select=endpoint,p256dh,auth`);
+  const data = { title: `Nouvelle pièce chez ${name}`, body: `${item.title}${item.size ? ", taille " + item.size : ""}`, url: `${APP_URL}#/item/${item_id}`, tag: `ailo-item-${item_id}` };
+  const results = await Promise.allSettled((subs || []).map((s: any) => sendPush(s, data)));
+  return json({ sent: results.filter((x) => x.status === "fulfilled").length });
+}
+
 // ---------- Stripe ----------
 const cents = (n: number) => Math.round(Number(n || 0) * 100);
 async function handlePay(req: Request) {
@@ -266,6 +285,7 @@ export async function handler(req: Request): Promise<Response> {
     let res: Response;
     if (req.method === "GET" && path.endsWith("/vapid")) res = json({ key: (await vapid()).pub });
     else if (req.method === "POST" && path.endsWith("/push")) res = await handlePush(req);
+    else if (req.method === "POST" && path.endsWith("/follow")) res = await handleFollow(req);
     else if (req.method === "POST" && path.endsWith("/pay")) res = await handlePay(req);
     else if (req.method === "POST" && path.endsWith("/stripe")) res = await handleStripe(req);
     else if (req.method === "GET") res = json({ ok: true, stripe: !!env("STRIPE_SECRET_KEY"), webhook: !!env("STRIPE_WEBHOOK_SECRET") });

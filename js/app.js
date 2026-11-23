@@ -2,7 +2,7 @@
 import * as S from "./store.js";
 import {
   CATEGORIES, STYLES, COLORS, SIZES, OCCASIONS, CONDITIONS, CONDITION_HINTS, DURATIONS, STATUS,
-  COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, SHIPPING_DAYS, DEFAULT_RADIUS, addDays
+  COMMISSION_RATE, COMMISSION_TIERS, VEDETTE_MIN, BETA_FREE_PREMIUM, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, SHIPPING_DAYS, DEFAULT_RADIUS, addDays
 } from "./data.js";
 import { esc, euro, fmtDate, fmtShort, today, initials, avatar, icon, photo, toast, resizeImage, calendar } from "./ui.js";
 import { searchPlaces, nearestPlace, currentPosition, kmLabel } from "./geo.js";
@@ -111,7 +111,13 @@ function card(i) {
 const grid = (items) => `<div class="grid2">${items.map(card).join("")}</div>`;
 const empty = (title, text, cta = "") => `<div class="empty"><p class="empty-title">${title}</p><p class="muted">${text}</p>${cta}</div>`;
 const statusPill = (s) => `<span class="pill tone-${STATUS[s].tone}">${STATUS[s].label}</span>`;
-const ownerBadge = (u) => u.type === "boutique" ? `<span class="badge">${icon("shop", 12)} Boutique partenaire</span>` : u.type === "pro" ? `<span class="badge">Pro</span>` : "";
+const ownerBadge = (u) => (u.type === "boutique" ? `<span class="badge">${icon("shop", 12)} Boutique partenaire</span>` : u.type === "pro" ? `<span class="badge">Pro</span>` : "")
+  + (S.isVedette(u.id) ? `<span class="badge vedette">${icon("star", 12)} Loueuse vedette</span>` : "");
+// Marque des options payantes au lancement
+const premiumTag = () => `<span class="premium" title="Option Premium">${icon("crown", 12)} Premium</span>`;
+const betaFreeNote = () => BETA_FREE_PREMIUM ? `<p class="premium-note small">${icon("crown", 14)} <span><strong>Offert pendant la bêta.</strong> Au lancement d'Aïlo, cette option fera partie de l'abonnement Premium.</span></p>` : "";
+const pct = (r) => `${Math.round(r * 100)} %`;
+const tiersText = () => COMMISSION_TIERS.map((t, k) => k === 0 ? `${pct(t.rate)} de base` : `${pct(t.rate)} dès ${t.min} locations terminées`).join(", ");
 const opts = (list, sel, placeholder) => `<option value="">${placeholder}</option>` + list.map((v) => `<option ${v === sel ? "selected" : ""}>${esc(v)}</option>`).join("");
 const fmtRating = (n) => (n === null || n === undefined ? "—" : n.toFixed(1).replace(".", ","));
 const ratingLine = (u) => (u.reviews ? `★ ${fmtRating(u.rating)} · ${u.reviews} avis` : "Nouveau membre");
@@ -193,7 +199,8 @@ function cgu() {
       <p class="box note small">Brouillon de travail : ces conditions doivent être rédigées et validées par un juriste avant l'ouverture au public.</p>
       <h2 class="h3">Âge minimum</h2><p>Aïlo est réservée aux personnes de 18 ans et plus. La vérification d'identité (avant la première location et avant de recevoir des gains) contrôle aussi l'âge.</p>
       <h2 class="h3">Le rôle d'Aïlo</h2><p>Aïlo met en relation des particuliers et des professionnelles qui louent des vêtements avec des personnes qui en ont besoin. Aïlo n'est ni propriétaire ni vendeur des pièces.</p>
-      <h2 class="h3">Paiement, caution, frais</h2><p>La locataire paie la location, les frais de service (${euro(SERVICE_FEE.fixed)} + ${SERVICE_FEE.rate * 100} % de la location), l'éventuel forfait nettoyage et, en cas d'envoi, un forfait aller-retour de ${euro(SHIPPING_FEE)}. Une caution est bloquée puis remboursée après le retour contrôlé. Aïlo prélève ${COMMISSION_RATE * 100} % sur la part de la loueuse.</p>
+      <h2 class="h3">Options Premium</h2><p>Certaines options (signalées par une couronne) seront payantes au lancement, comme suivre un profil. Elles sont offertes pendant la bêta.</p>
+      <h2 class="h3">Paiement, caution, frais</h2><p>La locataire paie la location, les frais de service (${euro(SERVICE_FEE.fixed)} + ${SERVICE_FEE.rate * 100} % de la location), l'éventuel forfait nettoyage et, en cas d'envoi, un forfait aller-retour de ${euro(SHIPPING_FEE)}. Une caution est bloquée puis remboursée après le retour contrôlé. Aïlo prélève une commission sur la part de la loueuse : ${tiersText()}. Le taux est fixé au moment de la réservation.</p>
       <h2 class="h3">Remise et retour</h2><p>Un état des lieux photo est fait à la remise et au retour. En cas de dommage, Aïlo compare les photos ; la retenue ne dépasse jamais la caution.</p>
       <h2 class="h3">Données personnelles</h2><p>Aïlo conserve ton prénom, ta commune, tes annonces, tes réservations et tes messages. Ton adresse exacte n'est jamais affichée. Tu peux supprimer ton compte à tout moment.</p>
     </div>`
@@ -440,7 +447,15 @@ function membre(id) {
         <div class="grow"><h1 class="h1 inline">${esc(u.name)}</h1>
           <div class="muted small">${icon("pin", 13)} ${esc(u.city)}${kmLabel(dist(id)) ? " · " + kmLabel(dist(id)) : ""}${u.verified ? " · identité vérifiée" : ""}</div>
           <div class="small">${ratingLine(u)}</div></div>
-        ${ownerBadge(u)}</div>
+        </div>
+      <div class="tags">${ownerBadge(u)}</div>
+      ${id !== S.me().id ? `<div class="follow-box box">
+        <div class="row gap"><div class="grow"><strong>${S.isFollowing(id) ? `Tu suis ${esc(u.name)}` : `Suivre ${esc(u.name)}`}</strong> ${premiumTag()}
+          <span class="small block muted">${S.isFollowing(id) ? "Tu reçois une notification à chaque nouvelle pièce." : "Reçois une notification dès qu'une nouvelle pièce est en ligne."}</span></div>
+          <button class="btn sm ${S.isFollowing(id) ? "ghost" : ""}" data-action="follow" data-id="${id}" aria-pressed="${S.isFollowing(id)}">${S.isFollowing(id) ? `${icon("check", 16)} Suivie` : "Suivre"}</button></div>
+        ${betaFreeNote()}
+        ${S.followersCount(id) ? `<p class="muted small">${S.followersCount(id)} abonnée${S.followersCount(id) > 1 ? "s" : ""}</p>` : ""}
+      </div>` : ""}
       <h2 class="h2">Son dressing <span class="muted small">${items.length} pièce${items.length > 1 ? "s" : ""}</span></h2>
       ${items.length ? grid(items) : empty("Rien à louer pour l'instant", "Repasse plus tard.")}
     </div>`
@@ -448,6 +463,15 @@ function membre(id) {
 }
 
 // ---------------------------------------------------------------- Dressing
+function tierBox() {
+  const me = S.me().id, n = S.rentalsDone(me), rate = S.commissionFor(me), next = S.nextTier(me);
+  const bar = next ? Math.min(100, Math.round(n / (n + next.missing) * 100)) : 100;
+  return `<button class="box tier" data-action="tiers">
+    <span class="row gap"><span class="grow"><strong>Ta commission : ${pct(rate)}</strong>${S.isVedette(me) ? ` <span class="badge vedette">${icon("star", 12)} Loueuse vedette</span>` : ""}
+      <span class="small block muted">${next ? `Encore ${next.missing} location${next.missing > 1 ? "s" : ""} terminée${next.missing > 1 ? "s" : ""} pour passer à ${pct(next.rate)}${n < VEDETTE_MIN ? " et devenir Loueuse vedette" : ""}.` : "Tu as atteint le meilleur palier. Merci !"}</span></span>${icon("chevron", 16)}</span>
+    <span class="bar"><span style="width:${bar}%"></span></span>
+  </button>`;
+}
 function dressing() {
   const items = S.myItems();
   const cats = [...new Set(items.map((i) => i.category))];
@@ -465,6 +489,7 @@ function dressing() {
     html: `<div class="page">
       <h1 class="h1">Mon dressing</h1>
       <div class="stats"><div><strong>${items.length}</strong><span>pièces</span></div><div><strong>${active}</strong><span>en location</span></div><div class="accent-bg"><strong>${euro(S.earnings())}</strong><span>gains prévus</span></div></div>
+      ${tierBox()}
       ${pending ? `<a class="box alert" href="#/locations" data-action="tab-loue">${pending} demande${pending > 1 ? "s" : ""} de location en attente ${icon("chevron", 16)}</a>` : ""}
       <div class="chips">${["", ...cats].map((c) => `<button class="chip ${ui.dressFilter === c ? "on" : ""}" data-action="dress-filter" data-c="${esc(c)}" aria-pressed="${ui.dressFilter === c}">${c || "Tout"}</button>`).join("")}</div>
       <div class="grid3">
@@ -538,7 +563,7 @@ function itemForm(id) {
           ${DURATIONS.map((x) => `<label class="field"><span>${x.label}</span><input type="number" name="p-${x.id}" min="1" step="1" inputmode="numeric" value="${d.prices[x.id] ?? ""}" placeholder="—"></label>`).join("")}
         </div>
         <label class="field"><span>Caution *</span><input type="number" name="deposit" min="0" step="5" inputmode="numeric" value="${d.deposit}" required></label>
-        <p class="muted small">Aïlo prélève ${COMMISSION_RATE * 100} % sur le prix de location. Le forfait nettoyage, l'envoi et la caution ne sont pas commissionnés.</p>
+        <p class="muted small">Aïlo prélève ${pct(S.commissionFor(S.me().id))} sur le prix de location (moins quand tu loues beaucoup : ${tiersText()}). Le forfait nettoyage, l'envoi et la caution ne sont pas commissionnés.</p>
       </section>
 
       <section class="stack"><h2 class="h3">4. Remise, nettoyage, réservation</h2>
@@ -690,7 +715,7 @@ function locationDetail(id) {
           ${creditUsed ? `<div class="li"><span>Crédit Aïlo</span><span class="accent">− ${euro(creditUsed)}</span></div>` : ""}
           <div class="li"><span>Caution</span><span>${euro(deposit)}</span></div>
           <div class="li total"><span>Total payé</span><span>${euro(paid)}</span></div>` :
-          `<div class="li"><span class="muted">Commission Aïlo (${COMMISSION_RATE * 100} %)</span><span class="muted">− ${euro(price * COMMISSION_RATE)}</span></div>
+          `<div class="li"><span class="muted">Commission Aïlo (${pct(S.rateOf(r))})</span><span class="muted">− ${euro(price * S.rateOf(r))}</span></div>
           <div class="li total"><span>Tu recevras</span><span>${euro(S.groupPayout(r))}</span></div>`}
       </section>
       ${r.status === "acceptee" && amRenter ? `<div class="box paybox"><p class="h3">Demande acceptée !</p><p class="small">Règle la location pour la confirmer. La caution est bloquée puis remboursée après le retour.</p></div>` : ""}
@@ -796,6 +821,7 @@ function profil() {
       <nav class="box list menu" aria-label="Mon compte">
         <a href="#/profil/modifier"><span>Modifier mon profil</span><span class="muted">${icon("chevron", 16)}</span></a>
         ${isStandalone() ? "" : `<button data-action="install"><span>Installer l'application</span><span class="muted">${icon("chevron", 16)}</span></button>`}
+        <button data-action="followed"><span>Profils suivis ${premiumTag()}</span><span class="muted">${S.following().length} ${icon("chevron", 16)}</span></button>
         <button data-action="share" data-kind="membre" data-id="${S.me().id}"><span>Partager mon dressing</span><span class="muted">${icon("chevron", 16)}</span></button>
         <button data-action="notif-on"><span>Notifications</span><span class="muted">${"Notification" in window && Notification.permission === "granted" ? "Activées" : "Activer"} ${icon("chevron", 16)}</span></button>
         <a href="#/favoris"><span>Mes favoris</span><span class="muted">${S.favorites().length} ${icon("chevron", 16)}</span></a>
@@ -805,7 +831,7 @@ function profil() {
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
         <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
-      <p class="muted small center">Aïlo v0.7 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+      <p class="muted small center">Aïlo v0.8 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
     </div>
     <dialog id="sheet" class="sheet"></dialog>`
   };
@@ -968,15 +994,15 @@ const actions = {
   },
   earnings() {
     const list = S.myLendings().filter((r) => ["confirmee", "remise", "rendue", "terminee"].includes(r.status));
-    openSheet(`<h2 class="h2">Mes gains et mon crédit</h2><p class="muted small">Montants nets, après la commission de ${COMMISSION_RATE * 100} %. Une location terminée devient du crédit : tu peux l'utiliser pour louer à ton tour, ou le virer sur ton compte.</p>
+    openSheet(`<h2 class="h2">Mes gains et mon crédit</h2><p class="muted small">Montants nets, après la commission (${pct(S.commissionFor(S.me().id))} actuellement). Une location terminée devient du crédit : tu peux l'utiliser pour louer à ton tour, ou le virer sur ton compte.</p>
       <div class="box list">${list.map((r) => `<div class="li"><span>${esc((S.item(r.itemId) || gone).title)} <span class="muted small">${fmtShort(r.start)} · ${STATUS[r.status].label.toLowerCase()}</span></span><span>${euro(S.groupPayout(r))}</span></div>`).join("") || '<p class="muted">Aucune location pour l\'instant.</p>'}
       <div class="li total"><span>Crédit disponible</span><span>${euro(S.credit())}</span></div></div>`);
   },
   plans() {
     openSheet(`<h2 class="h2">Abonnements</h2><p class="muted small">Contenu à définir — proposition.</p>
       <div class="plans">
-        <div class="box"><strong>Base · gratuit</strong><p class="small">Publier et louer. Commission de ${COMMISSION_RATE * 100} % par location.</p></div>
-        <div class="box accent-border"><strong>Premium</strong><p class="small">Statistiques de ce qui se loue, badge qualité, annonces en haut de page.</p></div>
+        <div class="box"><strong>Base · gratuit</strong><p class="small">Publier et louer. Commission dégressive : ${tiersText()}.</p></div>
+        <div class="box accent-border"><strong>Premium</strong> ${premiumTag()}<p class="small">Suivre des profils et être prévenue de leurs nouvelles pièces, statistiques de ce qui se loue, annonces en haut de page.</p>${betaFreeNote()}</div>
         <div class="box"><strong>Pro</strong><p class="small">Pour les professionnelles : badge Pro, annonces illimitées, page vitrine.</p></div>
       </div>`);
   },
@@ -1027,6 +1053,26 @@ const actions = {
     if (navigator.share) { try { await navigator.share({ title, text, url }); } catch (e) { /* partage annulé */ } return; }
     try { await navigator.clipboard.writeText(url); toast("Lien copié : colle-le dans un message ou une story."); }
     catch (e) { openSheet(`<h2 class="h2">Partager</h2><p class="small">Copie ce lien :</p><input class="field-input" readonly value="${esc(url)}" onclick="this.select()">`); }
+  },
+  follow(el) {
+    const id = el.dataset.id;
+    const on = S.toggleFollow(id);
+    toast(on ? `Tu suis ${S.user(id).name} : tu seras prévenue de ses nouvelles pièces.` : `Tu ne suis plus ${S.user(id).name}.`);
+    if (on && "Notification" in window && Notification.permission === "default") setTimeout(() => actions["notif-on"](), 600);
+    route(true);
+  },
+  followed() {
+    const ids = S.following();
+    openSheet(`<h2 class="h2">Profils suivis ${premiumTag()}</h2>${betaFreeNote()}
+      ${ids.length ? `<div class="box list">${ids.map((id) => { const u = S.user(id); return `<a class="li plain" href="#/membre/${id}" onclick="document.getElementById('sheet').close()"><span class="row gap">${avatar(u, "sm")} ${esc(u.name)}</span><span class="muted small">${esc(u.city)}</span></a>`; }).join("")}</div>`
+        : `<p class="muted small">Tu ne suis encore personne. Sur la page d'une loueuse, touche « Suivre » pour être prévenue de ses nouvelles pièces.</p>`}`);
+  },
+  tiers() {
+    const me = S.me().id;
+    openSheet(`<h2 class="h2">Bonus gros loueur</h2>
+      <p class="small">Plus tu loues, moins Aïlo prend. Le palier est calculé sur tes locations terminées.</p>
+      <div class="box list">${COMMISSION_TIERS.map((t, k) => `<div class="li ${S.commissionFor(me) === t.rate ? "total" : ""}"><span>${k === 0 ? "Au départ" : `Dès ${t.min} locations`}${t.min === VEDETTE_MIN ? ` <span class="badge vedette">${icon("star", 12)} Vedette</span>` : ""}</span><span>${pct(t.rate)}</span></div>`).join("")}</div>
+      <p class="muted small">Locations terminées : <strong>${S.rentalsDone(me)}</strong>. Le badge « Loueuse vedette » met aussi tes pièces en avant dans les résultats.</p>`);
   },
   "photo-search"() { document.getElementById("search-photo").click(); },
   "clear-lookalike"() { ui.lookalike = null; route(true); },

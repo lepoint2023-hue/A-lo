@@ -3,7 +3,7 @@
 // est appliquée tout de suite à cette copie puis envoyée à Supabase.
 // En cas d'échec, on prévient et on recharge tout depuis la base.
 
-import { DURATIONS, COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, BUFFER_DAYS, SHIPPING_DAYS, addDays, tintFor } from "./data.js";
+import { DURATIONS, COMMISSION_RATE, COMMISSION_TIERS, VEDETTE_MIN, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, BUFFER_DAYS, SHIPPING_DAYS, addDays, tintFor } from "./data.js";
 import { distanceKm } from "./geo.js";
 import { SUPABASE_URL, SUPABASE_KEY, PAYMENT_STEP, FUNCTIONS_URL } from "./config.js";
 export { PAYMENT_STEP };
@@ -13,7 +13,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce" }
 });
 
-const empty = () => ({ me: null, users: {}, items: [], reservations: [], messages: {}, favorites: [], busy: [] });
+const empty = () => ({ me: null, users: {}, items: [], reservations: [], messages: {}, favorites: [], busy: [], follows: [], stats: {} });
 let db = empty();
 let session = null;
 let recovering = false;
@@ -42,7 +42,8 @@ const toRes = (r) => ({
   id: r.id, thread: r.thread_id, itemId: r.item_id, renterId: r.renter_id, ownerId: r.owner_id, durationId: r.duration_id,
   start: r.start_date, end: r.end_date, cleaning: r.cleaning, handover: r.handover, price: Number(r.price),
   cleaningFee: Number(r.cleaning_fee), shippingFee: Number(r.shipping_fee), serviceFee: Number(r.service_fee),
-  creditUsed: Number(r.credit_used), deposit: Number(r.deposit), status: r.status, createdAt: r.created_at
+  creditUsed: Number(r.credit_used), deposit: Number(r.deposit), status: r.status, createdAt: r.created_at,
+  commissionRate: r.commission_rate === null || r.commission_rate === undefined ? null : Number(r.commission_rate)
 });
 const fromRes = (r) => ({
   id: r.id, thread_id: r.thread, item_id: r.itemId, renter_id: r.renterId, owner_id: r.ownerId, duration_id: r.durationId,
@@ -205,16 +206,19 @@ export function sync() {
   if (syncing) return syncing;
   syncing = (async () => {
     const uid = session.user.id;
-    const [items, resas, favs, busy] = await Promise.all([
+    const [items, resas, favs, busy, follows, stats] = await Promise.all([
       sb.from("items").select("*").neq("status", "removed").order("created_at", { ascending: false }).limit(1000),
       sb.from("reservations").select("*"),
       sb.from("favorites").select("item_id"),
-      sb.rpc("busy_ranges")
+      sb.rpc("busy_ranges"),
+      sb.from("follows").select("follower_id,followed_id"),
+      sb.from("owner_stats").select("owner_id,rentals_done")
     ]);
     for (const r of [items, resas, favs, busy]) if (r.error) throw r.error;
     const ids = new Set([uid]);
     items.data.forEach((i) => ids.add(i.owner_id));
     resas.data.forEach((r) => { ids.add(r.owner_id); ids.add(r.renter_id); });
+    if (!follows.error) follows.data.forEach((f) => { if (f.follower_id === uid) ids.add(f.followed_id); });
     const threads = [...new Set(resas.data.map((r) => r.thread_id))];
     const [profs, revs, msgs] = await Promise.all([
       sb.from("profiles").select("*").in("id", [...ids]),
@@ -232,6 +236,8 @@ export function sync() {
     next.reservations.forEach((r) => { const v = byRes[r.id]; if (v) r.review = { rating: v.rating, text: v.body || "" }; });
     msgs.data.forEach((m) => (next.messages[m.thread_id] = next.messages[m.thread_id] || []).push({ from: m.sender_id || "system", text: m.body, at: m.created_at }));
     next.favorites = favs.data.map((f) => f.item_id);
+    next.follows = follows.error ? [] : follows.data; // tolère une base sans la migration 006
+    next.stats = stats.error ? {} : Object.fromEntries(stats.data.map((x) => [x.owner_id, x.rentals_done]));
     next.busy = busy.data.map((b) => ({ itemId: b.item_id, thread: b.thread_id, start: b.start_date, end: b.end_date, handover: b.handover }));
     db = next;
   })().finally(() => { syncing = null; });
@@ -297,7 +303,8 @@ export function catalog(f = {}) {
   }).sort((a, b) => {
     if (f.sort === "price") return minPrice(a) - minPrice(b);
     if (f.sort === "new") return b.createdAt.localeCompare(a.createdAt);
-    return (distanceTo(a.ownerId) ?? 9999) - (distanceTo(b.ownerId) ?? 9999);
+    const boost = (x) => (isVedette(x.ownerId) ? 10 : 0); // pièces des loueuses vedettes mises en avant
+    return ((distanceTo(a.ownerId) ?? 9999) - boost(a)) - ((distanceTo(b.ownerId) ?? 9999) - boost(b));
   });
 }
 
@@ -317,7 +324,35 @@ export const messages = (rid) => db.messages[rid] || [];
 export const receivedReviews = () => db.reservations.filter((r) => r.ownerId === db.me && r.review);
 
 // ---------- Argent ----------
-export const payoutFor = (r) => round(r.price * (1 - COMMISSION_RATE) + r.cleaningFee);
+// ---------- Bonus gros loueur ----------
+export const rentalsDone = (uid) => db.stats[uid] || 0;
+export const isVedette = (uid) => rentalsDone(uid) >= VEDETTE_MIN;
+export function commissionFor(uid) {
+  const n = rentalsDone(uid);
+  return COMMISSION_TIERS.filter((t) => n >= t.min).pop().rate;
+}
+export function nextTier(uid) {
+  const n = rentalsDone(uid);
+  const t = COMMISSION_TIERS.find((x) => x.min > n);
+  return t ? { rate: t.rate, missing: t.min - n } : null;
+}
+export const rateOf = (r) => (r.commissionRate ?? commissionFor(r.ownerId));
+export const payoutFor = (r) => round(r.price * (1 - rateOf(r)) + r.cleaningFee);
+
+// ---------- Suivre un profil ----------
+export const isFollowing = (uid) => db.follows.some((f) => f.follower_id === db.me && f.followed_id === uid);
+export const followersCount = (uid) => db.follows.filter((f) => f.followed_id === uid).length;
+export const following = () => db.follows.filter((f) => f.follower_id === db.me).map((f) => f.followed_id);
+export function toggleFollow(uid) {
+  if (isFollowing(uid)) {
+    db.follows = db.follows.filter((f) => !(f.follower_id === db.me && f.followed_id === uid));
+    write(() => sb.from("follows").delete().eq("follower_id", db.me).eq("followed_id", uid), "Désabonnement non enregistré.");
+    return false;
+  }
+  db.follows.push({ follower_id: db.me, followed_id: uid });
+  write(() => sb.from("follows").insert({ follower_id: db.me, followed_id: uid }), "Abonnement non enregistré.");
+  return true;
+}
 export const groupPayout = (r) => round(group(r).reduce((s, x) => s + payoutFor(x), 0));
 export const serviceFeeFor = (priceSum) => round(SERVICE_FEE.fixed + priceSum * SERVICE_FEE.rate);
 export function earnings() {

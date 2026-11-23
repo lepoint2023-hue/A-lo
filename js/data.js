@@ -47,7 +47,12 @@ export const DURATIONS = [
 ];
 
 // ---- Argent (proposition, à ajuster) ----
-export const COMMISSION_RATE = 0.15;      // prélevée sur la part de la loueuse
+export const COMMISSION_RATE = 0.15;      // prélevée sur la part de la loueuse (palier de base)
+// Bonus gros loueur : commission dégressive selon le nombre de locations terminées
+export const COMMISSION_TIERS = [{ min: 0, rate: 0.15 }, { min: 10, rate: 0.12 }, { min: 30, rate: 0.10 }];
+export const VEDETTE_MIN = 10;             // badge « Loueuse vedette » et pièces mises en avant
+// Options payantes au lancement, gratuites pendant la bêta
+export const BETA_FREE_PREMIUM = true;
 export const SERVICE_FEE = { fixed: 1, rate: 0.05 }; // frais de service payés par la locataire : 1 € + 5 % de la location
 export const SHIPPING_FEE = 12;           // forfait envoi aller-retour, un seul par colis (étiquette retour incluse)
 export const SHIPPING_MIN = 30;           // location minimale pour un envoi (plusieurs pièces de la même loueuse s'additionnent)

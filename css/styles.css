@@ -384,3 +384,13 @@ img.avatar { object-fit: cover; }
 .tips summary { cursor: pointer; font-weight: 600; color: var(--accent); display: flex; align-items: center; gap: 6px; }
 .tips ul { margin: 10px 0 4px; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); }
 .field-input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font: inherit; }
+
+/* v0.8 : options Premium, suivre un profil, bonus gros loueur */
+.premium { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 10px; background: #F6E9C8; color: #8A6410; font-size: 11px; font-weight: 700; letter-spacing: .3px; vertical-align: middle; }
+.premium-note { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: #FBF4E2; color: #6B4E0C; }
+.premium-note svg { flex: none; margin-top: 2px; color: #B08417; }
+.badge.vedette { background: #F6E9C8; color: #8A6410; }
+.follow-box { display: grid; gap: 4px; }
+.tier { display: grid; gap: 10px; width: 100%; text-align: left; cursor: pointer; font: inherit; color: var(--ink); }
+.tier .bar { display: block; height: 6px; border-radius: 3px; background: var(--sand); overflow: hidden; }
+.tier .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
