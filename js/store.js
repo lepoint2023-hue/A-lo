@@ -523,8 +523,8 @@ export function book({ itemIds, durationId, start, cleaning, handover, useCredit
 export const TRANSITIONS = {
   demandee: [{ to: ACCEPTED, by: "owner", label: "Accepter" }, { to: "refusee", by: "owner", label: "Refuser", ghost: true }, { to: "annulee", by: "renter", label: "Annuler la demande", ghost: true }],
   acceptee: [{ to: "confirmee", by: "renter", label: "Payer", pay: true }, { to: "annulee", by: "renter", label: "Annuler", ghost: true }],
-  confirmee: [{ to: "remise", by: "both", label: "Vêtement remis (état des lieux fait)" }, { to: "annulee", by: "renter", label: "Annuler", ghost: true }],
-  remise: [{ to: "rendue", by: "both", label: "Vêtement rendu" }],
+  confirmee: [{ to: "remise", by: "owner", label: "Vêtement remis (état des lieux fait)" }, { to: "annulee", by: "renter", label: "Annuler", ghost: true }],
+  remise: [{ to: "rendue", by: "owner", label: "Vêtement rendu" }],
   rendue: [{ to: "terminee", by: "owner", label: "Tout est conforme : rendre la caution" }, { to: "litige", by: "owner", label: "Signaler un problème", ghost: true }],
   litige: [{ to: "terminee", by: "owner", label: "Litige réglé" }]
 };
@@ -533,8 +533,8 @@ const SYSTEM_TEXT = {
   confirmee: PAYMENT_STEP ? "Paiement reçu : la location est confirmée." : "Demande acceptée : la location est confirmée.",
   refusee: "Demande refusée.",
   annulee: "Réservation annulée.",
-  remise: "Vêtement remis. État des lieux enregistré.",
-  rendue: "Vêtement rendu. La loueuse vérifie l'état.",
+  remise: "Vêtement remis, confirmé par la loueuse. État des lieux enregistré.",
+  rendue: "Vêtement rendu, confirmé par la loueuse. Elle vérifie l'état.",
   terminee: "Location terminée : caution remboursée, loueuse payée.",
   litige: "Un problème a été signalé. Aïlo examine les photos des deux états des lieux."
 };
