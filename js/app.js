@@ -783,7 +783,7 @@ function profil() {
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
         <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
-      <p class="muted small center">Aïlo v0.4 · ${esc(S.myEmail())} · version de test : aucun paiement réel. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+      <p class="muted small center">Aïlo v0.6 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
     </div>
     <dialog id="sheet" class="sheet"></dialog>`
   };
@@ -828,7 +828,7 @@ function editProfile() {
 function openSheet(html) {
   const s = document.getElementById("sheet");
   s.innerHTML = `<form method="dialog">${html}<div class="sheet-actions"><button class="btn">Fermer</button></div></form>`;
-  s.showModal();
+  if (!s.open) s.showModal();
 }
 
 // ---------------------------------------------------------------- Actions (délégation)
@@ -962,12 +962,18 @@ const actions = {
   },
   async logout() { await S.signOut(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); ui.place = null; go("#/"); route(); },
   "auth-mode"(el) { ui.authMode = el.dataset.m; route(true); },
-  pay(el) {
+  async pay(el) {
     const id = el.dataset.id;
-    openSheet(`<h2 class="h2">Paiement</h2>
+    openSheet(`<h2 class="h2">Paiement</h2><p class="small">Ouverture de la page de paiement sécurisée…</p>`);
+    const res = await S.startPayment(id);
+    if (res.url) { location.href = res.url; return; }
+    const sheet = document.getElementById("sheet");
+    if (!sheet.open) return;
+    openSheet(res.notReady ? `<h2 class="h2">Paiement</h2>
       <p class="small">Le paiement en ligne sécurisé (carte, Bancontact) arrive très bientôt.</p>
       <p class="box note small"><strong>Pendant la bêta</strong> : réglez la location directement entre vous (virement, Payconiq ou espèces à la remise), puis confirme ici.</p>
-      <button type="button" class="btn" data-action="beta-paid" data-id="${id}">J'ai réglé la location</button>`);
+      <button type="button" class="btn" data-action="beta-paid" data-id="${id}">J'ai réglé la location</button>`
+      : `<h2 class="h2">Paiement</h2><p class="small">${esc(res.error)}</p>`);
   },
   "beta-paid"(el) {
     document.getElementById("sheet").close();
@@ -976,9 +982,15 @@ const actions = {
     route(true);
   },
   async "notif-on"() {
-    if (!("Notification" in window)) { toast("Ce téléphone ne gère pas les notifications."); return; }
+    if (!("Notification" in window)) { toast("Sur iPhone, ajoute d'abord Aïlo à l'écran d'accueil, puis ouvre-la depuis l'icône."); return; }
     const p = await Notification.requestPermission();
-    toast(p === "granted" ? "Notifications activées sur cet appareil" : "Notifications refusées : tu peux les autoriser dans les réglages du navigateur.");
+    if (p !== "granted") { toast("Notifications refusées : tu peux les autoriser dans les réglages du navigateur."); route(true); return; }
+    try {
+      await S.enablePush();
+      toast("Notifications activées : tu seras prévenue même app fermée");
+    } catch (e) {
+      toast("Notifications activées quand l'app est ouverte (l'envoi app fermée n'a pas pu être branché).");
+    }
     route(true);
   },
   zoom(el) {
@@ -1161,7 +1173,11 @@ function recoveryView() {
 // ---------------------------------------------------------------- Démarrage
 view.innerHTML = `<div class="page onb"><div class="logo big-logo">Aïlo</div><p class="muted">Chargement…</p></div>`;
 tabbar.hidden = true;
-S.init().catch(() => {}).finally(() => route());
+S.init().catch(() => {}).finally(() => {
+  route();
+  // Si les notifications sont déjà autorisées, on (ré)abonne discrètement cet appareil
+  if (S.hasSession() && "Notification" in window && Notification.permission === "granted") S.enablePush().catch(() => {});
+});
 
 // Rafraîchit les données en revenant dans l'app, et régulièrement sur les écrans de suivi
 const live = () => /^#\/(messages|location|locations)/.test(location.hash);

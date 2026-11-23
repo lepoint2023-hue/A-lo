@@ -5,7 +5,7 @@
 
 import { DURATIONS, COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, BUFFER_DAYS, SHIPPING_DAYS, addDays, tintFor } from "./data.js";
 import { distanceKm } from "./geo.js";
-import { SUPABASE_URL, SUPABASE_KEY, PAYMENT_STEP } from "./config.js";
+import { SUPABASE_URL, SUPABASE_KEY, PAYMENT_STEP, FUNCTIONS_URL } from "./config.js";
 export { PAYMENT_STEP };
 const ACCEPTED = PAYMENT_STEP ? "acceptee" : "confirmee";
 
@@ -90,6 +90,52 @@ function listen() {
 }
 function unlisten() { if (channel) { sb.removeChannel(channel); channel = null; } }
 
+// ---------- Notifications push (app fermée) ----------
+const b64uToBytes = (s) => { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); };
+const bytesToB64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+export const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+// Abonne cet appareil (à appeler après l'autorisation des notifications). Renvoie true si c'est bon.
+export async function enablePush() {
+  if (!pushSupported() || !session || Notification.permission !== "granted") return false;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    const res = await fetch(FUNCTIONS_URL + "/vapid");
+    if (!res.ok) throw new Error("vapid " + res.status);
+    const { key } = await res.json();
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+  }
+  const { error } = await sb.from("push_subscriptions").upsert({
+    endpoint: sub.endpoint, user_id: db.me, p256dh: bytesToB64u(sub.getKey("p256dh")), auth: bytesToB64u(sub.getKey("auth"))
+  }, { onConflict: "endpoint" });
+  if (error) throw error;
+  return true;
+}
+export async function disablePush() {
+  if (!pushSupported()) return;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (sub) { await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+}
+
+// ---------- Paiement (Stripe Checkout via la fonction serveur) ----------
+// Renvoie { url } (page de paiement) ou { notReady: true } tant que Stripe n'est pas branché, ou { error }.
+export async function startPayment(thread) {
+  try {
+    const res = await fetch(FUNCTIONS_URL + "/pay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session && session.access_token) },
+      body: JSON.stringify({ thread })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.url) return { url: data.url };
+    if (data.error === "stripe_not_configured") return { notReady: true };
+    return { error: data.error || "Le paiement n'a pas pu démarrer." };
+  } catch (e) {
+    return { notReady: true };
+  }
+}
+
 // ---------- Messages lus / non lus (mémorisé sur cet appareil) ----------
 const readKey = () => "ailo-read-" + db.me;
 function readMap() { try { return JSON.parse(localStorage.getItem(readKey()) || "{}"); } catch (e) { return {}; } }
@@ -146,6 +192,7 @@ export async function setNewPassword(password) {
   return {};
 }
 export async function signOut() {
+  await disablePush().catch(() => {});
   await sb.auth.signOut();
   session = null;
   db = empty();

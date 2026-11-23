@@ -15,6 +15,8 @@ export function aiEndpoint() {
 export const SUPABASE_URL = "https://yiiwwnrayhestpozgckv.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_9j-HTpE7_Hxzxksu3t45FA_Sz1UFmUL";
 
-// Étape « Demande acceptée, à payer » : nécessite supabase/migration-004 dans la base.
+// Étape « Demande acceptée, à payer » (migration 004 appliquée).
 // Tant qu'elle n'est pas appliquée, une demande acceptée passe directement à « Confirmée ».
-export const PAYMENT_STEP = false;
+export const PAYMENT_STEP = true;
+// Fonction serveur (notifications push, paiement Stripe)
+export const FUNCTIONS_URL = SUPABASE_URL + "/functions/v1/ailo";
