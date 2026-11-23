@@ -300,6 +300,8 @@ const OCCASION_BANNERS = {
   "Soirée": { kicker: "Soirée", title: "Briller jusqu'au bout de la nuit", text: "Robes, combinaisons et vestes habillées", bg: "#E4E1F0, #D6D2E8" },
   "Cocktail": { kicker: "Cocktail", title: "Élégante sans en faire trop", text: "Robes courtes, ensembles et accessoires", bg: "#F6E1DC, #EDD0C9" },
   "Gala": { kicker: "Gala", title: "Le grand soir", text: "Robes longues, costumes et smokings", bg: "#E2E6EC, #D3D9E2" },
+  "Business": { kicker: "Business", title: "Impeccable pour le travail", text: "Tailleurs, costumes, chemisiers et vestes", bg: "#E6E8EB, #D8DCE1" },
+  "Vacances & plage": { kicker: "Vacances & plage", title: "Légère et décontractée", text: "Robes d'été, lin, chapeaux et sacs de plage", bg: "#FBEFD8, #F5E1BC" },
   "Communion": { kicker: "Communion", title: "Une tenue pour la fête de famille", text: "Des tenues claires et élégantes", bg: "#EEF2E6, #E0E8D5" },
   "Baptême": { kicker: "Baptême", title: "Pour accueillir le petit dernier", text: "Des tenues douces et chics pour la cérémonie", bg: "#E5EEF2, #D6E5EC" },
   "Tous les jours": { kicker: "Tous les jours", title: "Le dressing du quotidien", text: "Des pièces faciles à porter, pour changer de style", bg: "#EFEBE4, #E4DED4" }
