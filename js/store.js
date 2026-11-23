@@ -5,7 +5,9 @@
 
 import { DURATIONS, COMMISSION_RATE, SERVICE_FEE, SHIPPING_FEE, SHIPPING_MIN, BUFFER_DAYS, SHIPPING_DAYS, addDays, tintFor } from "./data.js";
 import { distanceKm } from "./geo.js";
-import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
+import { SUPABASE_URL, SUPABASE_KEY, PAYMENT_STEP } from "./config.js";
+export { PAYMENT_STEP };
+const ACCEPTED = PAYMENT_STEP ? "acceptee" : "confirmee";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce" }
@@ -61,11 +63,46 @@ export async function init() {
   sb.auth.onAuthStateChange((event, s) => {
     session = s;
     if (event === "PASSWORD_RECOVERY") { recovering = true; refresh(); }
+    if (s) listen(); else unlisten();
   });
   const { data } = await sb.auth.getSession();
   session = data.session;
-  if (session) await sync().catch(() => toast("Connexion à la base impossible. Vérifie ta connexion internet."));
+  if (session) { await sync().catch(() => toast("Connexion à la base impossible. Vérifie ta connexion internet.")); listen(); }
 }
+
+// ---------- Temps réel : nouveaux messages et changements de réservation ----------
+let channel = null;
+function listen() {
+  if (channel || !session) return;
+  channel = sb.channel("ailo-live")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (p) => {
+      const m = p.new;
+      const fromOther = m.sender_id && m.sender_id !== db.me;
+      sync().then(() => {
+        refresh();
+        if (fromOther) window.dispatchEvent(new CustomEvent("ailo:incoming", { detail: { thread: m.thread_id, from: user(m.sender_id).name, text: m.body } }));
+        else if (!m.sender_id) window.dispatchEvent(new CustomEvent("ailo:incoming", { detail: { thread: m.thread_id, from: "Aïlo", text: m.body, system: true } }));
+      }).catch(() => {});
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, () => { sync().then(refresh).catch(() => {}); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "items" }, () => { sync().then(refresh).catch(() => {}); })
+    .subscribe();
+}
+function unlisten() { if (channel) { sb.removeChannel(channel); channel = null; } }
+
+// ---------- Messages lus / non lus (mémorisé sur cet appareil) ----------
+const readKey = () => "ailo-read-" + db.me;
+function readMap() { try { return JSON.parse(localStorage.getItem(readKey()) || "{}"); } catch (e) { return {}; } }
+export function markRead(thread) {
+  const m = readMap();
+  m[thread] = new Date().toISOString();
+  try { localStorage.setItem(readKey(), JSON.stringify(m)); } catch (e) { /* rien */ }
+}
+export function isUnread(thread) {
+  const last = readMap()[thread] || "";
+  return (db.messages[thread] || []).some((x) => x.from !== db.me && (x.at || "") > last);
+}
+export const unreadCount = () => db.reservations.filter((r) => r.thread === r.id && isUnread(r.id)).length;
 export const hasSession = () => !!session;
 export const isRecovering = () => recovering;
 export const myEmail = () => session?.user?.email || "";
@@ -336,33 +373,35 @@ export function book({ itemIds, durationId, start, cleaning, handover, useCredit
       id: k === 0 ? mainId : uuid(), thread: mainId, itemId: id, renterId: db.me, ownerId: first.ownerId, durationId, start, end, cleaning, handover,
       price: Number(i.prices[durationId]), cleaningFee: (cleaning === "forfait" || i.cleaningRequired) ? Number(i.cleaningFee || 0) : 0, deposit: Number(i.deposit || 0),
       shippingFee: k === 0 ? q.shippingFee : 0, serviceFee: k === 0 ? q.serviceFee : 0, creditUsed: k === 0 ? q.creditUsed : 0,
-      status: instant ? "confirmee" : "demandee", createdAt: now
+      status: instant ? ACCEPTED : "demandee", createdAt: now
     };
   });
   db.reservations.push(...rows);
   rows.forEach((r) => db.busy.push({ itemId: r.itemId, thread: mainId, start, end, handover }));
   const n = itemIds.length;
-  const sys = instant ? `Réservation confirmée${n > 1 ? ` (${n} pièces, un seul colis)` : ""}.`
-    : `Demande envoyée${n > 1 ? ` pour ${n} pièces` : ""}. La loueuse a 24 h pour répondre ; tu ne paies qu'une fois acceptée.`;
+  const sys = instant ? `Réservation acceptée automatiquement${n > 1 ? ` (${n} pièces, un seul colis)` : ""}.${PAYMENT_STEP ? " Il reste à payer pour la confirmer." : ""}`
+    : `Demande envoyée${n > 1 ? ` pour ${n} pièces` : ""}. Tu ne paies qu'une fois la demande acceptée.`;
   db.messages[mainId] = [{ from: "system", text: sys, at: now }];
   write(async () => {
     let res = await sb.from("reservations").insert(rows.map(fromRes));
     if (res.error) return res;
-    if (instant) { res = await sb.from("reservations").update({ status: "confirmee" }).eq("thread_id", mainId); if (res.error) return res; }
+    if (instant) { res = await sb.from("reservations").update({ status: ACCEPTED }).eq("thread_id", mainId); if (res.error) return res; }
     return sb.from("messages").insert({ thread_id: mainId, sender_id: null, body: sys });
   }, "La réservation n'a pas pu être enregistrée.");
   return { reservation: reservation(mainId) };
 }
 
 export const TRANSITIONS = {
-  demandee: [{ to: "confirmee", by: "owner", label: "Accepter" }, { to: "refusee", by: "owner", label: "Refuser", ghost: true }, { to: "annulee", by: "renter", label: "Annuler la demande", ghost: true }],
+  demandee: [{ to: ACCEPTED, by: "owner", label: "Accepter" }, { to: "refusee", by: "owner", label: "Refuser", ghost: true }, { to: "annulee", by: "renter", label: "Annuler la demande", ghost: true }],
+  acceptee: [{ to: "confirmee", by: "renter", label: "Payer", pay: true }, { to: "annulee", by: "renter", label: "Annuler", ghost: true }],
   confirmee: [{ to: "remise", by: "both", label: "Vêtement remis (état des lieux fait)" }, { to: "annulee", by: "renter", label: "Annuler", ghost: true }],
   remise: [{ to: "rendue", by: "both", label: "Vêtement rendu" }],
   rendue: [{ to: "terminee", by: "owner", label: "Tout est conforme : rendre la caution" }, { to: "litige", by: "owner", label: "Signaler un problème", ghost: true }],
   litige: [{ to: "terminee", by: "owner", label: "Litige réglé" }]
 };
 const SYSTEM_TEXT = {
-  confirmee: "Réservation acceptée.",
+  acceptee: "Demande acceptée ! Il reste à payer pour confirmer la location.",
+  confirmee: PAYMENT_STEP ? "Paiement reçu : la location est confirmée." : "Demande acceptée : la location est confirmée.",
   refusee: "Demande refusée.",
   annulee: "Réservation annulée.",
   remise: "Vêtement remis. État des lieux enregistré.",
@@ -384,6 +423,7 @@ export function transition(rid, to) {
 }
 
 export function sendMessage(rid, text) {
+  markRead(rid);
   (db.messages[rid] = db.messages[rid] || []).push({ from: db.me, text, at: new Date().toISOString() });
   write(() => sb.from("messages").insert({ thread_id: rid, sender_id: db.me, body: text }), "Message non envoyé.");
 }

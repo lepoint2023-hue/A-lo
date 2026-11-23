@@ -61,6 +61,7 @@ export const HANDOVER = { main: "Main propre", envoi: "Envoi", both: "Main propr
 
 export const STATUS = {
   demandee: { label: "Demandée", tone: "wait" },
+  acceptee: { label: "À payer", tone: "wait" },
   confirmee: { label: "Confirmée", tone: "ok" },
   remise: { label: "En cours", tone: "ok" },
   rendue: { label: "Rendue", tone: "info" },

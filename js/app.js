@@ -61,7 +61,21 @@ function route(keep) {
 }
 window.addEventListener("hashchange", () => route());
 window.addEventListener("ailo:toast", (e) => toast(e.detail));
-window.addEventListener("ailo:refresh", () => { if (!document.querySelector("input:focus, textarea:focus")) route(true); });
+window.addEventListener("ailo:incoming", (e) => {
+  const { thread, from, text, system } = e.detail;
+  if (location.hash === "#/messages/" + thread && document.visibilityState === "visible") { S.markRead(thread); return; }
+  if (document.visibilityState === "visible") toast(system ? text : `Nouveau message de ${from}`);
+  else if ("Notification" in window && Notification.permission === "granted" && navigator.serviceWorker) {
+    navigator.serviceWorker.ready.then((reg) => reg.showNotification(system ? "Aïlo" : `Message de ${from}`, { body: text, icon: "icons/icon-192.png", tag: "ailo-" + thread, data: { url: location.pathname + "#/messages/" + thread } })).catch(() => {});
+  }
+  setTab(currentTab());
+});
+window.addEventListener("ailo:refresh", () => {
+  // Ne jamais redessiner un formulaire en cours ni un champ en train d'être rempli
+  if (/^#\/(dressing\/|profil\/modifier)/.test(location.hash) || document.querySelector("input:focus, textarea:focus, dialog[open]")) { setTab(currentTab()); return; }
+  route(true);
+});
+const currentTab = () => ({ "": "decouvrir", item: "", favoris: "decouvrir", membre: "decouvrir", dressing: "dressing", locations: "locations", location: "locations", messages: "messages", profil: "profil" })[location.hash.split("/")[1] || ""] ?? "";
 
 function setTab(tab) {
   tabbar.querySelectorAll("a").forEach((a) => {
@@ -69,7 +83,8 @@ function setTab(tab) {
     a.classList.toggle("on", on);
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  tabbar.querySelector("[data-tab=locations] .dot").hidden = !S.myLendings().some((r) => r.status === "demandee");
+  tabbar.querySelector("[data-tab=locations] .dot").hidden = !(S.myLendings().some((r) => r.status === "demandee") || S.myRentals().some((r) => r.status === "acceptee"));
+  tabbar.querySelector("[data-tab=messages] .dot").hidden = !S.unreadCount();
 }
 
 const go = (h) => { location.hash = h; };
@@ -466,7 +481,7 @@ function itemForm(id) {
   return {
     noTabbar: true, bottomBar: true, title: existing ? "Modifier" : "Nouvelle pièce",
     html: `<form id="item-form" class="page" novalidate>
-      <header class="topbar"><button type="button" class="icon-btn" data-action="cancel-form" aria-label="Annuler">${icon("close", 20)}</button><h1 class="h1 inline">${existing ? "Modifier la pièce" : "Nouvelle pièce"}</h1><span></span></header>
+      <header class="topbar"><button type="button" class="icon-btn" data-action="cancel-form" aria-label="Retour">${icon("back", 20)}</button><h1 class="h1 inline">${existing ? "Modifier la pièce" : "Nouvelle pièce"}</h1><span></span></header>
 
       <section class="stack"><h2 class="h3">1. Photos <span class="muted small">(3 à 8, format portrait)</span></h2>
         <div class="photo-strip" id="photo-strip">${photoStrip(d)}</div>
@@ -627,7 +642,7 @@ function locationDetail(id) {
   const g = S.group(r);
   const amRenter = r.renterId === S.me().id;
   const other = S.user(amRenter ? r.ownerId : r.renterId);
-  const steps = ["demandee", "confirmee", "remise", "rendue", "terminee"];
+  const steps = S.PAYMENT_STEP ? ["demandee", "acceptee", "confirmee", "remise", "rendue", "terminee"] : ["demandee", "confirmee", "remise", "rendue", "terminee"];
   const cur = steps.indexOf(r.status === "litige" ? "rendue" : r.status);
   const myRole = amRenter ? "renter" : "owner";
   const acts = S.TRANSITIONS[r.status] || [];
@@ -644,7 +659,7 @@ function locationDetail(id) {
       <div class="stack">${g.map((x) => { const i = S.item(x.itemId) || gone; return `<a class="box loc" href="#/item/${x.itemId}"><div class="loc-ph">${photo(i)}</div>
         <div class="grow"><strong>${esc(i.title)}</strong><div class="muted small">${amRenter ? "Chez" : "Louée par"} ${esc(other.name)} · ${esc(other.city)}</div></div>${x === r ? statusPill(r.status) : ""}</a>`; }).join("")}</div>
       ${g.length > 1 ? `<p class="muted small">${g.length} pièces dans le même colis.</p>` : ""}
-      ${["refusee", "annulee"].includes(r.status) ? "" : `<ol class="steps">${steps.map((s, k) => `<li class="${k < cur ? "done" : k === cur ? "cur" : ""}">${STATUS[s].label}</li>`).join("")}</ol>`}
+      ${["refusee", "annulee"].includes(r.status) ? "" : `<ol class="steps ${steps.length === 6 ? "six" : ""}">${steps.map((s, k) => `<li class="${k < cur ? "done" : k === cur ? "cur" : ""}">${STATUS[s].label}</li>`).join("")}</ol>`}
       <div class="two"><div class="box mini"><span class="muted small">Remise</span><strong>${fmtDate(r.start)}</strong></div><div class="box mini"><span class="muted small">Retour</span><strong>${fmtDate(r.end)}</strong></div></div>
       <div class="box stack">${calendar(r.start, [{ start: r.start, end: r.end }])}${r.end.slice(0, 7) !== r.start.slice(0, 7) ? calendar(r.end, [{ start: r.start, end: r.end }]) : ""}</div>
       <section class="box list">
@@ -658,13 +673,18 @@ function locationDetail(id) {
           `<div class="li"><span class="muted">Commission Aïlo (${COMMISSION_RATE * 100} %)</span><span class="muted">− ${euro(price * COMMISSION_RATE)}</span></div>
           <div class="li total"><span>Tu recevras</span><span>${euro(S.groupPayout(r))}</span></div>`}
       </section>
-      ${mine.length ? `<div class="stack">${mine.map((a) => `<button class="btn ${a.ghost ? "ghost" : ""}" data-action="transition" data-id="${r.id}" data-to="${a.to}">${a.label}</button>`).join("")}</div>` : ""}
+      ${r.status === "acceptee" && amRenter ? `<div class="box paybox"><p class="h3">Demande acceptée !</p><p class="small">Règle la location pour la confirmer. La caution est bloquée puis remboursée après le retour.</p></div>` : ""}
+      ${!S.PAYMENT_STEP && r.status === "confirmee" ? `<div class="box paybox"><p class="h3">${amRenter ? "Demande acceptée !" : "Location confirmée"}</p><p class="small">${amRenter ? `Montant à régler : <strong>${euro(paid)}</strong>, dont ${euro(deposit)} de caution rendue au retour.` : `Tu recevras ${euro(S.groupPayout(r))}.`} Le paiement en ligne arrive très bientôt ; pendant la bêta, réglez directement entre vous (virement, Payconiq ou espèces à la remise). Fixez le lieu et l'heure de remise par message.</p></div>` : ""}
+      ${mine.length ? `<div class="stack">${mine.map((a) => a.pay
+        ? `<button class="btn" data-action="pay" data-id="${r.id}">Payer ${euro(paid)}</button>`
+        : `<button class="btn ${a.ghost ? "ghost" : ""}" data-action="transition" data-id="${r.id}" data-to="${a.to}">${a.label}</button>`).join("")}</div>` : ""}
       ${theirs.length ? `<p class="muted small center">En attente de ${esc(other.name)} : ${theirs.map((a) => a.label.toLowerCase()).join(" ou ")}.</p>` : ""}
       ${r.handover === "envoi" ? `<p class="box note small">${amRenter ? `Envoi en point relais : le colis part ${SHIPPING_DAYS} jours avant la remise. Pour le retour, l'étiquette est incluse.` : `Envoi en point relais : dépose le colis ${SHIPPING_DAYS} jours avant le ${fmtShort(r.start)}. L'étiquette est fournie par Aïlo.`}</p>` : ""}
       <a class="btn ghost" href="#/messages/${r.thread}">${icon("chat", 18)} Écrire à ${esc(other.name.split(" ")[0])}</a>
       ${r.status === "terminee" && amRenter && !r.review ? reviewForm() : ""}
       ${r.review ? `<div class="box"><p class="small muted">Avis</p><p>${"★".repeat(r.review.rating)}${"☆".repeat(5 - r.review.rating)}</p><p>${esc(r.review.text)}</p></div>` : ""}
-    </div>`,
+    </div>
+    <dialog id="sheet" class="sheet"></dialog>`,
     mount() {
       const f = document.getElementById("review-form");
       if (f) f.addEventListener("submit", (e) => {
@@ -695,8 +715,9 @@ function messagesList() {
       ${convs.length ? `<div class="box list">${convs.map(({ r, last }) => {
         const other = S.user(r.renterId === S.me().id ? r.ownerId : r.renterId);
         const i = S.item(r.itemId) || gone;
-        return `<a class="conv" href="#/messages/${r.id}">${avatar(other)}
-          <span class="grow"><strong>${esc(other.name)}</strong> <span class="muted small">· ${esc(i.title)}</span>
+        const unread = S.isUnread(r.id);
+        return `<a class="conv ${unread ? "unread" : ""}" href="#/messages/${r.id}">${avatar(other)}
+          <span class="grow"><strong>${esc(other.name)}</strong>${unread ? ' <span class="new-dot" aria-label="non lu"></span>' : ""} <span class="muted small">· ${esc(i.title)}</span>
           <span class="muted small ellipsis block">${last.from === "system" ? "" : last.from === S.me().id ? "Toi : " : ""}${esc(last.text)}</span></span>${icon("chevron", 16)}</a>`;
       }).join("")}</div>` : empty("Pas encore de messages", "Une conversation s'ouvre avec chaque réservation.")}
     </div>`
@@ -720,6 +741,8 @@ function thread(rid) {
         <button class="icon-btn solid" aria-label="Envoyer">${icon("send", 20)}</button></form>
     </div>`,
     mount() {
+      S.markRead(rid);
+      setTab("messages");
       window.scrollTo(0, document.body.scrollHeight);
       document.getElementById("composer").addEventListener("submit", (e) => {
         e.preventDefault();
@@ -752,6 +775,7 @@ function profil() {
       ${received.map((r) => `<div class="box"><div class="row between small"><strong>${esc(S.user(r.renterId).name)}</strong><span class="muted">${"★".repeat(r.review.rating)}</span></div><p>${esc(r.review.text)}</p></div>`).join("")}
       <nav class="box list menu" aria-label="Mon compte">
         <a href="#/profil/modifier"><span>Modifier mon profil</span><span class="muted">${icon("chevron", 16)}</span></a>
+        <button data-action="notif-on"><span>Notifications</span><span class="muted">${"Notification" in window && Notification.permission === "granted" ? "Activées" : "Activer"} ${icon("chevron", 16)}</span></button>
         <a href="#/favoris"><span>Mes favoris</span><span class="muted">${S.favorites().length} ${icon("chevron", 16)}</span></a>
         <button data-action="earnings"><span>Mes gains et mon crédit</span><span class="muted">${icon("chevron", 16)}</span></button>
         <button data-action="plans"><span>Mon abonnement</span><span class="muted">${plans[u.plan]} ${icon("chevron", 16)}</span></button>
@@ -938,6 +962,25 @@ const actions = {
   },
   async logout() { await S.signOut(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); ui.place = null; go("#/"); route(); },
   "auth-mode"(el) { ui.authMode = el.dataset.m; route(true); },
+  pay(el) {
+    const id = el.dataset.id;
+    openSheet(`<h2 class="h2">Paiement</h2>
+      <p class="small">Le paiement en ligne sécurisé (carte, Bancontact) arrive très bientôt.</p>
+      <p class="box note small"><strong>Pendant la bêta</strong> : réglez la location directement entre vous (virement, Payconiq ou espèces à la remise), puis confirme ici.</p>
+      <button type="button" class="btn" data-action="beta-paid" data-id="${id}">J'ai réglé la location</button>`);
+  },
+  "beta-paid"(el) {
+    document.getElementById("sheet").close();
+    S.transition(el.dataset.id, "confirmee");
+    toast("Location confirmée");
+    route(true);
+  },
+  async "notif-on"() {
+    if (!("Notification" in window)) { toast("Ce téléphone ne gère pas les notifications."); return; }
+    const p = await Notification.requestPermission();
+    toast(p === "granted" ? "Notifications activées sur cet appareil" : "Notifications refusées : tu peux les autoriser dans les réglages du navigateur.");
+    route(true);
+  },
   zoom(el) {
     const i = S.item(location.hash.split("/")[2]);
     if (!i || !i.photos.length) return;
@@ -1123,7 +1166,13 @@ S.init().catch(() => {}).finally(() => route());
 // Rafraîchit les données en revenant dans l'app, et régulièrement sur les écrans de suivi
 const live = () => /^#\/(messages|location|locations)/.test(location.hash);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.hasSession()) S.sync().then(() => window.dispatchEvent(new Event("ailo:refresh"))).catch(() => {}); });
-setInterval(() => { if (live() && S.hasSession() && document.visibilityState === "visible") S.sync().then(() => window.dispatchEvent(new Event("ailo:refresh"))).catch(() => {}); }, 20000);
+// Toutes les 20 s sur les écrans de suivi, toutes les 60 s ailleurs (pastilles à jour même sans temps réel)
+let ticks = 0;
+setInterval(() => {
+  ticks++;
+  if (!S.hasSession() || document.visibilityState !== "visible") return;
+  if (live() || ticks % 3 === 0) S.sync().then(() => window.dispatchEvent(new Event("ailo:refresh"))).catch(() => {});
+}, 20000);
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }

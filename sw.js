@@ -1,6 +1,6 @@
 // Aïlo — service worker : l'app s'ouvre même hors connexion.
 // Change VERSION à chaque mise en ligne pour forcer la mise à jour.
-const VERSION = "ailo-v0.4.7";
+const VERSION = "ailo-v0.5.0";
 const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/store.js", "js/data.js", "js/ui.js", "js/geo.js", "js/config.js", "data/places.json", "vendor/supabase-2.119.2.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -22,4 +22,14 @@ self.addEventListener("fetch", (e) => {
       return res;
     }).catch(() => caches.match(e.request).then((r) => r || caches.match("index.html")))
   );
+});
+
+// Clic sur une notification : ouvrir (ou ramener) l'app sur la bonne conversation
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+    for (const c of list) if ("focus" in c) { c.navigate(url).catch(() => {}); return c.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });
