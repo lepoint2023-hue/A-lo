@@ -68,7 +68,8 @@ export async function init() {
   });
   const { data } = await sb.auth.getSession();
   session = data.session;
-  if (session) { await sync().catch(() => toast("Connexion à la base impossible. Vérifie ta connexion internet.")); listen(); }
+  await sync().catch(() => toast("Connexion à la base impossible. Vérifie ta connexion internet."));
+  if (session) listen();
 }
 
 // ---------- Temps réel : nouveaux messages et changements de réservation ----------
@@ -117,6 +118,12 @@ export async function disablePush() {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
   if (sub) { await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+}
+
+// ---------- Signalements (obligation des hébergeurs : DSA art. 16) ----------
+export async function report(kind, targetId, reason, details) {
+  const { error } = await sb.from("reports").insert({ reporter_id: db.me || null, target_kind: kind, target_id: targetId, reason, details: details || "" });
+  return !error;
 }
 
 // ---------- Paiement (Stripe Checkout via la fonction serveur) ----------
@@ -197,31 +204,34 @@ export async function signOut() {
   await sb.auth.signOut();
   session = null;
   db = empty();
+  await sync().catch(() => {}); // retour au catalogue public
 }
 
 // ---------- Chargement ----------
 let syncing = null;
+// Colonnes de profil visibles sans compte (jamais l'e-mail, ni les dates d'acceptation)
+const PUBLIC_PROFILE = "id,name,zip,city,lat,lng,photo_url,plan,kind,verified";
 export function sync() {
-  if (!session) return Promise.resolve();
   if (syncing) return syncing;
   syncing = (async () => {
-    const uid = session.user.id;
+    const uid = session ? session.user.id : null; // sans compte : catalogue public seulement
+    const none = () => Promise.resolve({ data: [], error: null });
     const [items, resas, favs, busy, follows, stats] = await Promise.all([
       sb.from("items").select("*").neq("status", "removed").order("created_at", { ascending: false }).limit(1000),
-      sb.from("reservations").select("*"),
-      sb.from("favorites").select("item_id"),
+      uid ? sb.from("reservations").select("*") : none(),
+      uid ? sb.from("favorites").select("item_id") : none(),
       sb.rpc("busy_ranges"),
-      sb.from("follows").select("follower_id,followed_id"),
+      uid ? sb.from("follows").select("follower_id,followed_id") : none(),
       sb.from("owner_stats").select("owner_id,rentals_done")
     ]);
-    for (const r of [items, resas, favs, busy]) if (r.error) throw r.error;
-    const ids = new Set([uid]);
+    for (const r of [items, resas, favs]) if (r.error) throw r.error;
+    const ids = new Set(uid ? [uid] : []);
     items.data.forEach((i) => ids.add(i.owner_id));
     resas.data.forEach((r) => { ids.add(r.owner_id); ids.add(r.renter_id); });
     if (!follows.error) follows.data.forEach((f) => { if (f.follower_id === uid) ids.add(f.followed_id); if (f.followed_id === uid) ids.add(f.follower_id); });
     const threads = [...new Set(resas.data.map((r) => r.thread_id))];
     const [profs, revs, msgs] = await Promise.all([
-      sb.from("profiles").select("*").in("id", [...ids]),
+      sb.from("profiles").select(uid ? "*" : PUBLIC_PROFILE).in("id", [...ids]),
       sb.from("reviews").select("reservation_id,author_id,target_id,rating,body,created_at").in("target_id", [...ids]),
       threads.length ? sb.from("messages").select("*").in("thread_id", threads).order("created_at") : Promise.resolve({ data: [] })
     ]);
@@ -229,7 +239,7 @@ export function sync() {
     const next = empty();
     next.me = uid;
     profs.data.forEach((p) => { next.users[p.id] = toUser(p, revs.data); });
-    if (!next.users[uid]) next.users[uid] = toUser({ id: uid }, []);
+    if (uid && !next.users[uid]) next.users[uid] = toUser({ id: uid }, []);
     next.items = items.data.map(toItem);
     next.reservations = resas.data.map(toRes);
     const byRes = Object.fromEntries(revs.data.map((v) => [v.reservation_id, v]));
@@ -238,7 +248,7 @@ export function sync() {
     next.favorites = favs.data.map((f) => f.item_id);
     next.follows = follows.error ? [] : follows.data; // tolère une base sans la migration 006
     next.stats = stats.error ? {} : Object.fromEntries(stats.data.map((x) => [x.owner_id, x.rentals_done]));
-    next.busy = busy.data.map((b) => ({ itemId: b.item_id, thread: b.thread_id, start: b.start_date, end: b.end_date, handover: b.handover }));
+    next.busy = (busy.error ? [] : busy.data).map((b) => ({ itemId: b.item_id, thread: b.thread_id, start: b.start_date, end: b.end_date, handover: b.handover }));
     db = next;
   })().finally(() => { syncing = null; });
   return syncing;
@@ -260,7 +270,10 @@ async function write(promiseFn, failMsg) {
 }
 
 // ---------- Lecture ----------
-export const me = () => db.users[db.me] || { id: null, name: "", city: "", reviews: 0, rating: null };
+function guestPlace() { try { return JSON.parse(localStorage.getItem("ailo-guest-place") || "null"); } catch (e) { return null; } }
+export function setGuestPlace(p) { try { localStorage.setItem("ailo-guest-place", JSON.stringify(p)); } catch (e) { /* ignore */ } }
+export const isGuest = () => !session;
+export const me = () => db.users[db.me] || Object.assign({ id: null, name: "", city: "", zip: "", lat: null, lng: null, reviews: 0, rating: null }, (!session && guestPlace()) || {});
 export const user = (id) => db.users[id] || { id, name: "Membre", city: "", reviews: 0, rating: null };
 export const item = (id) => db.items.find((i) => i.id === id);
 export const reservation = (id) => db.reservations.find((r) => r.id === id);

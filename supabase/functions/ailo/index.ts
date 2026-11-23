@@ -4,6 +4,7 @@
 //   POST /ailo/push    → appelée par la base à chaque nouveau message
 //   POST /ailo/follow  → appelée par la base à chaque nouvelle pièce (abonnées)
 //   POST /ailo/followed → appelée par la base quand quelqu'un suit une loueuse
+//   POST /ailo/report  → appelée par la base à chaque signalement (prévient les admins)
 //   POST /ailo/pay     → crée la page de paiement Stripe d'une location
 //   POST /ailo/stripe  → Stripe confirme le paiement (webhook)
 // Aucune dépendance. Secrets facultatifs : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
@@ -204,6 +205,18 @@ async function handleFollowed(req: Request) {
   return json({ sent: results.filter((x) => x.status === "fulfilled").length });
 }
 
+async function handleReport(req: Request) {
+  const secret = await getSecret("hook_secret");
+  if (!secret || req.headers.get("x-ailo-hook") !== secret) return json({ error: "forbidden" }, 403);
+  const r = await req.json();
+  const admins = ((await getSecret("admin_ids")) || "").split(",").map((x) => x.trim()).filter((x) => /^[0-9a-f-]{36}$/.test(x));
+  if (!admins.length) return json({ sent: 0 });
+  const subs = await rest(`push_subscriptions?user_id=in.(${admins.join(",")})&select=endpoint,p256dh,auth`);
+  const data = { title: "Signalement Aïlo", body: String(r.reason || "").slice(0, 120), url: `${APP_URL}#/${r.kind === "item" ? "item" : "membre"}/${r.target}`, tag: `ailo-report-${r.id}` };
+  const results = await Promise.allSettled((subs || []).map((s: any) => sendPush(s, data)));
+  return json({ sent: results.filter((x) => x.status === "fulfilled").length });
+}
+
 // ---------- Stripe ----------
 const cents = (n: number) => Math.round(Number(n || 0) * 100);
 async function handlePay(req: Request) {
@@ -302,6 +315,7 @@ export async function handler(req: Request): Promise<Response> {
     else if (req.method === "POST" && path.endsWith("/push")) res = await handlePush(req);
     else if (req.method === "POST" && path.endsWith("/follow")) res = await handleFollow(req);
     else if (req.method === "POST" && path.endsWith("/followed")) res = await handleFollowed(req);
+    else if (req.method === "POST" && path.endsWith("/report")) res = await handleReport(req);
     else if (req.method === "POST" && path.endsWith("/pay")) res = await handlePay(req);
     else if (req.method === "POST" && path.endsWith("/stripe")) res = await handleStripe(req);
     else if (req.method === "GET") res = json({ ok: true, stripe: !!env("STRIPE_SECRET_KEY"), webhook: !!env("STRIPE_WEBHOOK_SECRET") });

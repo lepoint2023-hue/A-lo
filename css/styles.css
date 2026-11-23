@@ -399,3 +399,5 @@ button.premium { border: 0; cursor: pointer; font-family: inherit; min-height: 2
 .premium-points li { display: flex; gap: 8px; align-items: flex-start; }
 .premium-points svg { flex: none; color: var(--accent); margin-top: 2px; }
 .followers-line { width: 100%; text-align: left; font: inherit; color: var(--ink); cursor: pointer; align-items: center; }
+.report-link { color: var(--muted, #8a8580); font-weight: 500; font-size: 13px; }
+.row.wrap { flex-wrap: wrap; }

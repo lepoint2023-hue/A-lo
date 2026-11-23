@@ -19,7 +19,8 @@ const ui = {
   dressFilter: "",
   booking: {},   // itemId -> { durationId, start, cleaning, handover, extras: [], useCredit }
   draft: null,   // pièce en cours d'édition
-  place: null    // commune choisie dans un sélecteur
+  place: null,   // commune choisie dans un sélecteur
+  authReason: "" // pourquoi on demande de se connecter
 };
 
 // ---------------------------------------------------------------- Routeur
@@ -37,15 +38,36 @@ const routes = [
   [/^#\/profil$/, profil],
   [/^#\/profil\/modifier$/, editProfile],
   [/^#\/membre\/([\w-]+)$/, membre],
-  [/^#\/cgu$/, cgu]
+  [/^#\/cgu$/, cgu],
+  [/^#\/connexion$/, () => authView()],
+  [/^#\/bienvenue$/, () => decouvrir()]
 ];
+// Pages visibles sans compte ; les autres demandent de se connecter
+const PUBLIC = /^(#?\/?|#\/item\/[\w-]+|#\/membre\/[\w-]+|#\/cgu|#\/connexion)$/;
+const GATE_REASON = { dressing: "Crée ton compte pour proposer tes vêtements à la location.", favoris: "Crée ton compte pour garder tes coups de cœur.", locations: "Crée ton compte pour suivre tes locations.", location: "Crée ton compte pour suivre tes locations.", messages: "Crée ton compte pour échanger avec les loueuses.", profil: "Crée ton compte pour avoir ton profil Aïlo." };
+// Demande un compte, puis revient où on était
+function needAccount(reason) {
+  ui.authReason = reason;
+  try { sessionStorage.setItem("ailo-after-auth", location.hash || "#/"); } catch (e) { /* ignore */ }
+  if (location.hash === "#/connexion") route(); else go("#/connexion");
+}
+function afterAuthTarget() {
+  let t = null;
+  try { t = sessionStorage.getItem("ailo-after-auth"); sessionStorage.removeItem("ailo-after-auth"); } catch (e) { /* ignore */ }
+  return t && t !== "#/connexion" ? t : "#/";
+}
 
 function route(keep) {
   const h = location.hash || "#/";
   let out = null;
-  if (!S.hasSession() && h !== "#/cgu") out = authView();
+  if (!S.hasSession() && !PUBLIC.test(h)) {
+    ui.authReason = GATE_REASON[h.split("/")[1]] || "";
+    try { sessionStorage.setItem("ailo-after-auth", h); } catch (e) { /* ignore */ }
+    out = authView();
+  }
   else if (S.isRecovering()) out = recoveryView();
-  else if (!S.isOnboarded() && h !== "#/cgu") out = onboarding();
+  else if (S.hasSession() && !S.isOnboarded() && h !== "#/cgu") out = onboarding();
+  else if (S.hasSession() && h === "#/connexion") { location.hash = "#/"; return; }
   else for (const [re, fn] of routes) {
     const m = h.match(re);
     if (m) { out = fn(...m.slice(1)); break; }
@@ -167,6 +189,12 @@ function setPlace(p) {
 }
 
 // ---------------------------------------------------------------- Bienvenue
+function ageFrom(iso) {
+  const b = new Date(iso + "T00:00:00"), n = new Date();
+  let a = n.getFullYear() - b.getFullYear();
+  if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
+  return a;
+}
 function onboarding() {
   const u = S.me();
   if (!ui.place && u.zip && u.name) ui.place = { zip: u.zip, city: u.city, lat: u.lat, lng: u.lng };
@@ -178,7 +206,7 @@ function onboarding() {
       <p class="muted">Deux informations pour commencer : elles servent à te montrer les pièces près de chez toi.</p>
       <label class="field"><span>Ton prénom *</span><input name="name" maxlength="30" autocomplete="given-name" value="${esc(u.name)}" required></label>
       ${placePicker(ui.place)}
-      <label class="toggle"><input type="checkbox" name="adult" required><span>J'ai 18 ans ou plus.</span></label>
+      <label class="field"><span>Date de naissance * <span class="muted small">(vérifie que tu as 18 ans ; elle n'est pas conservée)</span></span><input type="date" name="birth" required max="${today()}" min="1900-01-01"></label>
       <label class="toggle"><input type="checkbox" name="terms" required><span>J'accepte les <a href="#/cgu">conditions générales</a> et la politique de confidentialité.</span></label>
       <p id="onb-err" class="err small" role="alert"></p>
       <button class="btn">Commencer</button>
@@ -192,12 +220,16 @@ function onboarding() {
         const name = f.name.value.trim();
         if (!name) return (err.textContent = "Indique ton prénom.");
         if (!ui.place) return (err.textContent = "Choisis ta commune dans la liste, ou utilise ta position.");
-        if (!f.adult.checked) return (err.textContent = "Aïlo est réservée aux personnes majeures (18 ans et plus).");
+        if (!f.birth.value) return (err.textContent = "Indique ta date de naissance.");
+        if (ageFrom(f.birth.value) < 18) {
+          f.querySelector(".btn").disabled = true;
+          return (err.textContent = "Désolée : Aïlo est réservée aux personnes majeures (18 ans et plus). Tu ne peux pas créer de compte.");
+        }
         if (!f.terms.checked) return (err.textContent = "Accepte les conditions générales pour continuer.");
         S.updateMe(Object.assign({ name: name.charAt(0).toUpperCase() + name.slice(1), acceptedTerms: new Date().toISOString() }, ui.place));
         ui.place = null;
         toast(`Bienvenue ${S.me().name} !`);
-        const target = /^#\/(item|membre)\//.test(location.hash) ? location.hash : "#/"; // arrivée par un lien partagé
+        const target = afterAuthTarget(); // revient sur la pièce ou la page d'où on venait
         go(target); route();
         setTimeout(maybeWelcome, 1200);
       });
@@ -211,7 +243,8 @@ function cgu() {
     html: `<div class="page prose">
       <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><h1 class="h1 inline">Conditions générales</h1><span></span></header>
       <p class="box note small">Brouillon de travail : ces conditions doivent être rédigées et validées par un juriste avant l'ouverture au public.</p>
-      <h2 class="h3">Âge minimum</h2><p>Aïlo est réservée aux personnes de 18 ans et plus. La vérification d'identité (avant la première location et avant de recevoir des gains) contrôle aussi l'âge.</p>
+      <h2 class="h3">Âge minimum</h2><p>Aïlo est réservée aux personnes de 18 ans et plus. La date de naissance demandée à l'inscription sert uniquement à ce contrôle et n'est pas conservée. La vérification d'identité (avant la première location et avant de recevoir des gains) contrôle aussi l'âge. Tout compte ou contenu concernant une personne mineure est supprimé dès qu'il est signalé.</p>
+      <h2 class="h3">Signaler un contenu</h2><p>Chaque pièce et chaque profil a un bouton « Signaler ». Aïlo examine chaque signalement et retire rapidement les contenus illicites ou contraires à ces conditions.</p>
       <h2 class="h3">Le rôle d'Aïlo</h2><p>Aïlo met en relation des particuliers et des professionnelles qui louent des vêtements avec des personnes qui en ont besoin. Aïlo n'est ni propriétaire ni vendeur des pièces.</p>
       <h2 class="h3">Options Premium</h2><p>Certaines options (signalées par une couronne) seront payantes au lancement, comme suivre un profil. Elles sont offertes pendant la bêta.</p>
       <h2 class="h3">Paiement, caution, frais</h2><p>La locataire paie la location, les frais de service (${euro(SERVICE_FEE.fixed)} + ${SERVICE_FEE.rate * 100} % de la location), l'éventuel forfait nettoyage et, en cas d'envoi, un forfait aller-retour de ${euro(SHIPPING_FEE)}. Une caution est bloquée puis remboursée après le retour contrôlé. Aïlo prélève une commission sur la part de la loueuse : ${tiersText()}. Le taux est fixé au moment de la réservation.</p>
@@ -263,7 +296,7 @@ function decouvrir() {
       <header class="topbar"><div class="logo">Aïlo</div>
         <a class="icon-btn" href="#/favoris" aria-label="Mes favoris">${icon("heart", 20)}</a></header>
       ${installBanner()}
-      <p class="muted">Bonjour ${esc(u.name)}</p>
+      <p class="muted">${S.isGuest() ? `Bienvenue sur Aïlo · <a href="#/connexion" data-action="to-login">Se connecter</a>` : `Bonjour ${esc(u.name)}`}</p>
       <h1 class="h1">Quelle tenue pour ton prochain événement ?</h1>
       <div class="searchrow">
         <label class="search">${icon("search", 18)}<span class="sr">Rechercher</span>
@@ -271,7 +304,9 @@ function decouvrir() {
         <button class="icon-btn solid ghost-solid" data-action="photo-search" aria-label="Rechercher avec une photo">${icon("camera", 20)}</button>
         <button class="icon-btn solid" data-action="open-filters" aria-label="Filtres">${icon("filter", 20)}${n ? `<span class="count-badge">${n}</span>` : ""}</button>
       </div>
-      <button class="where" data-action="open-filters">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>
+      ${S.isGuest() && !u.city
+        ? `<button class="where" data-action="guest-place">${icon("pin", 16)} <strong>Choisis ta commune</strong> <span class="muted">pour voir les pièces près de chez toi</span></button>`
+        : `<button class="where" data-action="${S.isGuest() ? "guest-place" : "open-filters"}">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>`}
       <div class="label-caps">Afficher par</div>
       <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
       ${f.occasion === "Mariage" ? "" : `<button class="wedding" data-action="occasion" data-o="Mariage"><span class="wedding-kicker">Spécial mariage</span><strong>Invitée, témoin ou mariée</strong><span>Toutes les tenues pour le grand jour ${icon("chevron", 16)}</span></button>`}
@@ -362,7 +397,8 @@ function fiche(id) {
           <div class="grow"><strong>${esc(o.name)}</strong> ${ownerBadge(o)}<div class="muted small">${ratingLine(o)} · ${esc(o.city)}${kmLabel(dist(o.id)) ? ", " + kmLabel(dist(o.id)) : ""}</div></div>${icon("chevron", 16)}
         </a>
         ${i.description ? `<p class="desc">${esc(i.description)}</p>` : ""}
-        <button class="linkbtn share-link" data-action="share" data-kind="item" data-id="${id}">${icon("share", 16)} Partager cette pièce</button>
+        <div class="row gap wrap"><button class="linkbtn share-link" data-action="share" data-kind="item" data-id="${id}">${icon("share", 16)} Partager cette pièce</button>
+          ${mine ? "" : `<button class="linkbtn report-link" data-action="report" data-kind="item" data-id="${id}">Signaler</button>`}</div>
         ${mine ? `<div class="box note">C'est une pièce de ton dressing. <a href="#/dressing/${id}">La modifier</a></div>` : `
         <section class="stack">
           <h2 class="h3">Durée de location</h2>
@@ -470,6 +506,7 @@ function membre(id) {
         ${betaFreeNote()}
         ${S.followersCount(id) ? `<p class="muted small">${S.followersCount(id)} abonnée${S.followersCount(id) > 1 ? "s" : ""}</p>` : ""}
       </div>` : ""}
+      ${id !== S.me().id ? `<button class="linkbtn report-link" data-action="report" data-kind="membre" data-id="${id}">Signaler ce profil</button>` : ""}
       <h2 class="h2">Son dressing <span class="muted small">${items.length} pièce${items.length > 1 ? "s" : ""}</span></h2>
       ${items.length ? grid(items) : empty("Rien à louer pour l'instant", "Repasse plus tard.")}
     </div>`
@@ -847,7 +884,7 @@ function profil() {
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
         <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
-      <p class="muted small center">Aïlo v0.8 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+      <p class="muted small center">Aïlo v0.9 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
     </div>
     <dialog id="sheet" class="sheet"></dialog>`
   };
@@ -899,7 +936,7 @@ function openSheet(html) {
 // ---------------------------------------------------------------- Actions (délégation)
 const actions = {
   back: () => back("#/"),
-  fav(el) { S.toggleFav(el.dataset.id); if (S.isFav(el.dataset.id)) taste.add(S.item(el.dataset.id), 2); route(true); },
+  fav(el) { if (S.isGuest()) return needAccount("Crée ton compte pour garder tes coups de cœur."); S.toggleFav(el.dataset.id); if (S.isFav(el.dataset.id)) taste.add(S.item(el.dataset.id), 2); route(true); },
   group(el) { ui.groupBy = el.dataset.k; route(true); },
   occasion(el) { ui.filters.occasion = ui.filters.occasion === el.dataset.o ? "" : el.dataset.o; route(true); },
   "open-filters"() {
@@ -932,6 +969,7 @@ const actions = {
     updateBooking(el.dataset.id);
   },
   book(el) {
+    if (S.isGuest()) return needAccount("Crée ton compte (gratuit) pour réserver cette pièce. Tu reviendras ensuite directement ici.");
     const id = el.dataset.id, b = ui.booking[id];
     const res = S.book({ itemIds: [id, ...b.extras], durationId: b.durationId, start: b.start, cleaning: b.cleaning, handover: b.handover, useCredit: b.useCredit });
     if (res.error) { toast(res.error); return; }
@@ -1071,6 +1109,7 @@ const actions = {
     catch (e) { openSheet(`<h2 class="h2">Partager</h2><p class="small">Copie ce lien :</p><input class="field-input" readonly value="${esc(url)}" onclick="this.select()">`); }
   },
   follow(el) {
+    if (S.isGuest()) return needAccount("Crée ton compte pour suivre cette loueuse.");
     const id = el.dataset.id;
     const on = S.toggleFollow(id);
     toast(on ? `Tu suis ${S.user(id).name} : tu seras prévenue de ses nouvelles pièces.` : `Tu ne suis plus ${S.user(id).name}.`);
@@ -1105,7 +1144,39 @@ const actions = {
   },
   "photo-search"() { document.getElementById("search-photo").click(); },
   "clear-lookalike"() { ui.lookalike = null; route(true); },
+  guest() { ui.authReason = ""; },
+  "to-login"() { ui.authMode = "login"; ui.authReason = ""; },
+  "guest-place"() {
+    ui.place = null;
+    openSheet(`<h2 class="h2">Ta commune</h2><p class="small muted">Pour afficher les pièces près de chez toi. Rien n'est enregistré ailleurs que sur ton téléphone.</p>${placePicker(null)}
+      <button type="button" class="btn" data-action="guest-place-ok">Valider</button>`);
+    mountPlacePicker();
+  },
+  "guest-place-ok"() {
+    if (!ui.place) { toast("Choisis ta commune dans la liste, ou utilise ta position."); return; }
+    S.setGuestPlace(ui.place); ui.place = null;
+    document.getElementById("sheet").close();
+    route(true);
+  },
+  report(el) {
+    const { kind, id } = el.dataset;
+    const reasons = ["Personne mineure sur les photos ou derrière le compte", "Photo ou contenu inapproprié", "Arnaque ou annonce trompeuse", "Contrefaçon", "Autre"];
+    openSheet(`<h2 class="h2">Signaler ${kind === "item" ? "cette pièce" : "ce profil"}</h2>
+      <p class="small muted">Ton signalement est confidentiel. Aïlo l'examine rapidement et retire ce qui ne respecte pas les règles.</p>
+      <div class="radios">${reasons.map((r, k) => `<label class="radio"><input type="radio" name="rep-reason" value="${esc(r)}" ${k === 0 ? "" : ""}><span>${esc(r)}</span></label>`).join("")}</div>
+      <label class="field"><span>Précisions (facultatif)</span><textarea id="rep-details" rows="3" maxlength="500"></textarea></label>
+      <button type="button" class="btn" data-action="report-send" data-kind="${kind}" data-id="${id}">Envoyer le signalement</button>`);
+  },
+  async "report-send"(el) {
+    const r = document.querySelector("input[name=rep-reason]:checked");
+    if (!r) { toast("Choisis un motif."); return; }
+    el.disabled = true;
+    const ok = await S.report(el.dataset.kind, el.dataset.id, r.value, document.getElementById("rep-details").value.trim());
+    document.getElementById("sheet").close();
+    toast(ok ? "Merci, ton signalement a été envoyé." : "Le signalement n'a pas pu être envoyé. Réessaie plus tard.");
+  },
   async "notif-on"() {
+    if (S.isGuest()) return needAccount("Crée ton compte pour recevoir les notifications.");
     if (!("Notification" in window)) { toast("Sur iPhone, ajoute d'abord Aïlo à l'écran d'accueil, puis ouvre-la depuis l'icône."); return; }
     const p = await Notification.requestPermission();
     if (p !== "granted") { toast("Notifications refusées : tu peux les autoriser dans les réglages du navigateur."); route(true); return; }
@@ -1290,7 +1361,7 @@ function maybeWelcome() {
 
 // ---------------------------------------------------------------- Goûts : « Tu pourrais aimer »
 const taste = {
-  key: () => "ailo-taste-" + S.me().id,
+  key: () => "ailo-taste-" + (S.me().id || "visiteuse"),
   get() { try { return JSON.parse(lsGet(this.key()) || "{}"); } catch (e) { return {}; } },
   add(i, w) {
     if (!i) return;
@@ -1379,12 +1450,14 @@ function authView() {
     html: `<form id="auth" class="page onb" novalidate>
       <div class="logo big-logo">Aïlo</div>
       <h1 class="h1">Loue la tenue de ton prochain événement, ou loue ton dressing.</h1>
+      ${ui.authReason ? `<p class="box note small">${esc(ui.authReason)}</p>` : ""}
       <div class="seg" role="group" aria-label="Compte"><button type="button" data-action="auth-mode" data-m="signup" aria-pressed="${signup}">Créer un compte</button><button type="button" data-action="auth-mode" data-m="login" aria-pressed="${!signup}">Me connecter</button></div>
       <label class="field"><span>Adresse e-mail</span><input id="auth-email" name="email" type="email" autocomplete="email" inputmode="email" required></label>
       ${pwField("password", "Mot de passe" + (signup ? " (8 caractères minimum)" : ""), signup ? "new-password" : "current-password")}
       <p id="auth-err" class="err small" role="alert"></p>
       <button class="btn">${signup ? "Créer mon compte" : "Me connecter"}</button>
       ${signup ? "" : `<button type="button" class="linkbtn" data-action="forgot">Mot de passe oublié ?</button>`}
+      <a class="btn ghost" href="#/" data-action="guest">Découvrir sans compte</a>
       <p class="muted small center"><a href="#/cgu">Conditions générales et confidentialité</a></p>
     </form>`,
     mount() {
@@ -1399,7 +1472,9 @@ function authView() {
         btn.disabled = false; btn.textContent = signup ? "Créer mon compte" : "Me connecter";
         if (r.error) return (err.textContent = r.error);
         if (r.needConfirm) { err.textContent = ""; toast("Compte créé : confirme ton adresse avec le lien reçu par e-mail, puis connecte-toi."); ui.authMode = "login"; return route(true); }
-        go("#/"); route();
+        ui.authReason = "";
+        if (!S.isOnboarded()) { route(); return; } // l'inscription s'affiche ; elle renverra ensuite où on était
+        go(afterAuthTarget()); route();
       });
     }
   };
