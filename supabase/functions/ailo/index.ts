@@ -6,13 +6,17 @@
 //   POST /ailo/followed → appelée par la base quand quelqu'un suit une loueuse
 //   POST /ailo/report  → appelée par la base à chaque signalement (prévient les admins)
 //   POST /ailo/pay     → crée la page de paiement Stripe d'une location
-//   POST /ailo/stripe  → Stripe confirme le paiement (webhook)
+//   POST /ailo/subscribe → crée la page d'abonnement Premium (Stripe, mensuel)
+//   POST /ailo/stripe  → Stripe confirme les paiements et les abonnements (webhook)
 // Aucune dépendance. Secrets facultatifs : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
 // =====================================================================
 
 const APP_URL = "https://lepoint2023-hue.github.io/A-lo/";
 const APP_ORIGIN = "https://lepoint2023-hue.github.io";
 const VAPID_SUBJECT = "mailto:lepoint2023@gmail.com";
+// Prix Stripe de l'abonnement « Aïlo Premium » (4,99 €/mois). Mode test par défaut ;
+// au lancement, mettre le prix du mode réel dans le secret STRIPE_PREMIUM_PRICE.
+const PREMIUM_PRICE_TEST = "price_1UetXYD2vQzicv1zmMVPE11G";
 
 declare const Deno: any;
 const env = (k: string) => (typeof Deno !== "undefined" ? Deno.env.get(k) : (globalThis as any).process?.env?.[k]) || "";
@@ -272,6 +276,45 @@ async function handlePay(req: Request) {
   return json({ url: s.url });
 }
 
+async function handleSubscribe(req: Request) {
+  const user = await currentUser(req);
+  if (!user) return json({ error: "Connecte-toi pour t'abonner." }, 401);
+  const stripeKey = env("STRIPE_SECRET_KEY");
+  if (!stripeKey) return json({ error: "stripe_not_configured" }, 503);
+  const p = new URLSearchParams();
+  p.set("mode", "subscription");
+  p.set("locale", "fr");
+  p.set("line_items[0][price]", env("STRIPE_PREMIUM_PRICE") || PREMIUM_PRICE_TEST);
+  p.set("line_items[0][quantity]", "1");
+  p.set("client_reference_id", user.id);
+  p.set("metadata[user]", user.id);
+  p.set("subscription_data[metadata][user]", user.id);
+  if (user.email) p.set("customer_email", user.email);
+  p.set("success_url", `${APP_URL}#/profil`);
+  p.set("cancel_url", `${APP_URL}#/profil`);
+  const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${stripeKey}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: p.toString()
+  });
+  const s = await res.json();
+  if (!res.ok) return json({ error: (s.error && s.error.message) || "Stripe a refusé la demande." }, 502);
+  return json({ url: s.url });
+}
+
+// Abonnement actif → Premium jusqu'à la fin de la période payée ; terminé → retour en Base (sauf administratrices)
+async function applySubscription(sub: any) {
+  const uid = sub && sub.metadata && sub.metadata.user;
+  if (!uid || !/^[0-9a-f-]{36}$/.test(uid)) return;
+  const admins = ((await getSecret("admin_ids")) || "").split(",");
+  const active = ["active", "trialing", "past_due"].includes(sub.status);
+  const end = sub.current_period_end || (sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].current_period_end);
+  const patch = active
+    ? { plan: "premium", plan_until: end ? new Date(end * 1000).toISOString() : null }
+    : admins.includes(uid) ? { plan_until: null } : { plan: "base", plan_until: null };
+  await rest(`profiles?id=eq.${uid}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
 export async function verifyStripe(raw: string, header: string, secret: string, now = Date.now()) {
   const parts = Object.fromEntries(header.split(",").map((x) => x.split("=")).filter((x) => x.length === 2).map(([k, v]) => [k.trim(), v]));
   const sigs = header.split(",").filter((x) => x.trim().startsWith("v1=")).map((x) => x.trim().slice(3));
@@ -289,6 +332,10 @@ async function handleStripe(req: Request) {
   if (!(await verifyStripe(raw, req.headers.get("stripe-signature") || "", secret))) return json({ error: "bad signature" }, 400);
   const ev = JSON.parse(raw);
   const s = ev.data && ev.data.object;
+  if (["customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"].includes(ev.type)) {
+    await applySubscription(s);
+    return json({ received: true });
+  }
   const paid = (ev.type === "checkout.session.completed" && s.payment_status === "paid") || ev.type === "checkout.session.async_payment_succeeded";
   if (paid && s.metadata && s.metadata.thread) {
     const thread = s.metadata.thread;
@@ -317,6 +364,7 @@ export async function handler(req: Request): Promise<Response> {
     else if (req.method === "POST" && path.endsWith("/followed")) res = await handleFollowed(req);
     else if (req.method === "POST" && path.endsWith("/report")) res = await handleReport(req);
     else if (req.method === "POST" && path.endsWith("/pay")) res = await handlePay(req);
+    else if (req.method === "POST" && path.endsWith("/subscribe")) res = await handleSubscribe(req);
     else if (req.method === "POST" && path.endsWith("/stripe")) res = await handleStripe(req);
     else if (req.method === "GET") res = json({ ok: true, stripe: !!env("STRIPE_SECRET_KEY"), webhook: !!env("STRIPE_WEBHOOK_SECRET") });
     else res = json({ error: "not found" }, 404);

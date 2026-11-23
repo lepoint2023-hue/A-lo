@@ -125,6 +125,17 @@ export async function disablePush() {
   if (sub) { await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
 }
 
+// ---------- Abonnement Premium (Stripe, via la fonction serveur) ----------
+export async function startSubscription() {
+  try {
+    const res = await fetch(FUNCTIONS_URL + "/subscribe", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session && session.access_token) }, body: "{}" });
+    const data = await res.json().catch(() => ({}));
+    if (data.url) return { url: data.url };
+    if (data.error === "stripe_not_configured") return { notReady: true };
+    return { error: data.error || "L'abonnement n'a pas pu démarrer." };
+  } catch (e) { return { notReady: true }; }
+}
+
 // ---------- Signalements (obligation des hébergeurs : DSA art. 16) ----------
 export async function report(kind, targetId, reason, details) {
   const { error } = await sb.from("reports").insert({ reporter_id: db.me || null, target_kind: kind, target_id: targetId, reason, details: details || "" });

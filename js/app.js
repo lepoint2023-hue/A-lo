@@ -1144,7 +1144,14 @@ const actions = {
       <ul class="premium-points">${p.points.map((x) => `<li>${icon("check", 16)} <span>${esc(x)}</span></li>`).join("")}</ul>
       ${S.isPremium() ? `<p class="box note small">${icon("check", 14)} Tu as déjà accès à cette option.</p>` : BETA_FREE_PREMIUM ? betaFreeNote() : `<button type="button" class="btn" data-action="subscribe">${icon("crown", 16)} Passer à Premium</button>`}`);
   },
-  subscribe() { toast("L'abonnement en ligne arrive avec le paiement Stripe."); },
+  async subscribe(el) {
+    if (S.isGuest()) return needAccount("Crée ton compte pour passer à Premium.");
+    if (el) el.disabled = true;
+    const r = await S.startSubscription();
+    if (r.url) { location.href = r.url; return; }
+    if (el) el.disabled = false;
+    toast(r.notReady ? "L'abonnement en ligne arrive au lancement d'Aïlo." : r.error);
+  },
   tiers() {
     const me = S.me().id;
     openSheet(`<h2 class="h2">Bonus gros loueur</h2>
