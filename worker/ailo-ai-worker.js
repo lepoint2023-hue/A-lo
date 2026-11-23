@@ -18,7 +18,7 @@ const LISTS = {
   style: ["Chic", "Classique", "Bohème", "Glamour", "Vintage", "Minimaliste", "Rock"],
   color: ["Noir", "Blanc", "Écru", "Beige", "Camel", "Marron", "Gris", "Rouge", "Bordeaux", "Rose", "Orange", "Jaune", "Vert", "Kaki", "Bleu", "Marine", "Turquoise", "Violet", "Doré", "Argenté", "Multicolore"],
   size: ["XS", "S", "M", "L", "XL", "34", "36", "38", "40", "42", "44", "46", "48", "50", "52", "Unique"],
-  occasions: ["Mariage", "Soirée", "Cocktail", "Gala", "Business", "Vacances & plage", "Communion", "Baptême", "Tous les jours"]
+  occasions: ["Mariage", "Soirée", "Cocktail", "Business", "Vacances & plage", "Communion", "Baptême", "Tous les jours"]
 };
 
 const SYSTEM = `Tu aides une particulière à publier un vêtement à louer sur Aïlo, une app belge de location de tenues pour des événements.

@@ -27,7 +27,7 @@ export const COLORS = [
   { name: "Multicolore", hex: "conic-gradient(#B3312C, #E8C547, #2F6B4F, #4A78B5, #7A5C99, #B3312C)" }
 ];
 export const SIZES = ["XS", "S", "M", "L", "XL", "34", "36", "38", "40", "42", "44", "46", "48", "50", "52", "Unique"];
-export const OCCASIONS = ["Mariage", "Soirée", "Cocktail", "Gala", "Business", "Vacances & plage", "Communion", "Baptême", "Tous les jours"];
+export const OCCASIONS = ["Mariage", "Soirée", "Cocktail", "Business", "Vacances & plage", "Communion", "Baptême", "Tous les jours"];
 export const CONDITIONS = ["Neuf avec étiquette", "Neuf sans étiquette", "Comme neuf", "Très bon état", "Bon état"];
 export const CONDITION_HINTS = {
   "Neuf avec étiquette": "Jamais portée, étiquette encore attachée",
