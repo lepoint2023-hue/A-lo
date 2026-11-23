@@ -118,6 +118,21 @@ export async function enablePush() {
   if (error) throw error;
   return true;
 }
+// État réel des notifications d'Aïlo sur cet appareil (la simple autorisation peut venir d'OdeBot, même site)
+export async function pushStatus() {
+  if (!pushSupported()) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return (await reg.pushManager.getSubscription()) && Notification.permission === "granted" ? "on" : "off";
+  } catch (e) { return "off"; }
+}
+export async function testPush() {
+  try {
+    const res = await fetch(FUNCTIONS_URL + "/test-push", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session && session.access_token) }, body: "{}" });
+    const d = await res.json(); return d.sent || 0;
+  } catch (e) { return 0; }
+}
 export async function disablePush() {
   if (!pushSupported()) return;
   const reg = await navigator.serviceWorker.ready;

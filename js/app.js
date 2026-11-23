@@ -343,6 +343,7 @@ function decouvrir() {
     </div>
     ${filtersSheet()}`,
     mount() {
+      notifNudge();
       const q = document.getElementById("q");
       q.addEventListener("input", () => { ui.filters.q = q.value; document.getElementById("results").innerHTML = resultsHTML(); });
     }
@@ -917,6 +918,22 @@ function thread(rid) {
 }
 
 // ---------------------------------------------------------------- Profil
+// Rappel tant que les notifications d'Aïlo ne sont pas branchées sur ce téléphone
+async function notifNudge() {
+  if (S.isGuest() || document.getElementById("notif-nudge")) return;
+  const st = await S.pushStatus();
+  if (st !== "off" || !location.hash.match(/^#?\/?$/)) return;
+  const page = view.querySelector(".page");
+  if (!page) return;
+  page.insertAdjacentHTML("afterbegin", `<div class="notif-nudge" id="notif-nudge">${icon("bell", 18)}<span class="grow small"><strong>Active les notifications</strong> pour être prévenue des demandes, réservations et messages.</span><button class="btn sm" data-action="notif-on">Activer</button></div>`);
+}
+async function refreshNotifState() {
+  const el = document.getElementById("notif-state");
+  if (!el) return;
+  const st = await S.pushStatus();
+  el.textContent = { on: "Activées sur ce téléphone", off: "À activer", denied: "Bloquées", unsupported: isIOS() ? "Installer l'app d'abord" : "Non disponibles" }[st] || "";
+  el.classList.toggle("warn-text", st !== "on");
+}
 function profil() {
   const u = S.me();
   const received = S.receivedReviews();
@@ -939,16 +956,17 @@ function profil() {
         <button data-action="followers"><span>Mes abonnées</span><span class="muted">${S.followersCount(S.me().id)} ${icon("chevron", 16)}</span></button>
         <button data-action="followed"><span>Profils suivis ${premiumTag()}</span><span class="muted">${S.following().length} ${icon("chevron", 16)}</span></button>
         <button data-action="share" data-kind="membre" data-id="${S.me().id}"><span>Partager mon dressing</span><span class="muted">${icon("chevron", 16)}</span></button>
-        <button data-action="notif-on"><span>Notifications</span><span class="muted">${"Notification" in window && Notification.permission === "granted" ? "Activées" : "Activer"} ${icon("chevron", 16)}</span></button>
+        <button data-action="notif-on"><span>Notifications</span><span class="muted"><span id="notif-state">…</span> ${icon("chevron", 16)}</span></button>
         <a href="#/favoris"><span>Mes favoris</span><span class="muted">${S.favorites().length} ${icon("chevron", 16)}</span></a>
         <button data-action="earnings"><span>Mes gains et mon crédit</span><span class="muted">${icon("chevron", 16)}</span></button>
         <button data-action="plans"><span>Mon abonnement</span><span class="muted">${plans[u.plan]} ${icon("chevron", 16)}</span></button>
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
         <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
-      <p class="muted small center">Aïlo v0.9 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
+      <p class="muted small center">Aïlo v0.10 · ${esc(S.myEmail())} · version bêta. Localisation : bpost, © contributeurs OpenStreetMap.</p>
     </div>
-    <dialog id="sheet" class="sheet"></dialog>`
+    <dialog id="sheet" class="sheet"></dialog>`,
+    mount() { refreshNotifState(); }
   };
 }
 
@@ -1249,17 +1267,26 @@ const actions = {
   },
   async "notif-on"() {
     if (S.isGuest()) return needAccount("Crée ton compte pour recevoir les notifications.");
-    if (!("Notification" in window)) { toast("Sur iPhone, ajoute d'abord Aïlo à l'écran d'accueil, puis ouvre-la depuis l'icône."); return; }
+    if (!S.pushSupported()) { toast(isIOS() ? "Sur iPhone : ajoute d'abord Aïlo à l'écran d'accueil (Partager → Sur l'écran d'accueil), puis ouvre-la depuis l'icône." : "Ce navigateur ne gère pas les notifications."); return; }
     const p = await Notification.requestPermission();
-    if (p !== "granted") { toast("Notifications refusées : tu peux les autoriser dans les réglages du navigateur."); route(true); return; }
+    if (p !== "granted") { toast("Notifications bloquées : autorise-les dans les réglages du téléphone (Applications → Chrome → Notifications)."); route(true); return; }
     try {
       await S.enablePush();
-      toast("Notifications activées : tu seras prévenue même app fermée");
+      openSheet(`<h2 class="h2">${icon("bell", 20)} Notifications activées</h2>
+        <p class="small">Ce téléphone recevra une alerte pour chaque message, demande ou réservation, même app fermée.</p>
+        <button type="button" class="btn ghost" data-action="test-push">Envoyer une notification de test</button>`);
     } catch (e) {
-      toast("Notifications activées quand l'app est ouverte (l'envoi app fermée n'a pas pu être branché).");
+      toast("Les notifications n'ont pas pu être branchées : " + ((e && e.message) || e));
     }
     route(true);
   },
+  async "test-push"(el) {
+    el.disabled = true;
+    const n = await S.testPush();
+    el.disabled = false;
+    toast(n > 0 ? "Notification envoyée : regarde en haut de ton écran." : "Aucun appareil abonné : touche à nouveau « Notifications ».");
+  },
+
   zoom(el) {
     const i = S.item(location.hash.split("/")[2]);
     if (!i || !i.photos.length) return;
@@ -1448,7 +1475,7 @@ function maybeWelcome() {
   const key = "ailo-welcome-" + S.me().id;
   if (lsGet(key)) return;
   const needInstall = !isStandalone();
-  const needNotif = "Notification" in window && Notification.permission === "default";
+  const needNotif = S.pushSupported() && Notification.permission !== "denied";
   if (!needInstall && !needNotif) { lsSet(key, "1"); return; }
   lsSet(key, "1");
   openSheet(`<h2 class="h2">Aïlo dans ta poche</h2>

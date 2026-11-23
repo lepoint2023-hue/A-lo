@@ -221,6 +221,15 @@ async function handleReport(req: Request) {
   return json({ sent: results.filter((x) => x.status === "fulfilled").length });
 }
 
+async function handleTestPush(req: Request) {
+  const user = await currentUser(req);
+  if (!user) return json({ error: "Connecte-toi." }, 401);
+  const subs = await rest(`push_subscriptions?user_id=eq.${user.id}&select=endpoint,p256dh,auth`);
+  const data = { title: "Aïlo", body: "Les notifications fonctionnent sur ce téléphone.", url: `${APP_URL}#/profil`, tag: "ailo-test" };
+  const results = await Promise.allSettled((subs || []).map((s: any) => sendPush(s, data)));
+  return json({ sent: results.filter((x) => x.status === "fulfilled" && (x as any).value < 300).length });
+}
+
 // ---------- Stripe ----------
 const cents = (n: number) => Math.round(Number(n || 0) * 100);
 async function handlePay(req: Request) {
@@ -363,6 +372,7 @@ export async function handler(req: Request): Promise<Response> {
     else if (req.method === "POST" && path.endsWith("/follow")) res = await handleFollow(req);
     else if (req.method === "POST" && path.endsWith("/followed")) res = await handleFollowed(req);
     else if (req.method === "POST" && path.endsWith("/report")) res = await handleReport(req);
+    else if (req.method === "POST" && path.endsWith("/test-push")) res = await handleTestPush(req);
     else if (req.method === "POST" && path.endsWith("/pay")) res = await handlePay(req);
     else if (req.method === "POST" && path.endsWith("/subscribe")) res = await handleSubscribe(req);
     else if (req.method === "POST" && path.endsWith("/stripe")) res = await handleStripe(req);

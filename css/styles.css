@@ -460,3 +460,6 @@ body.has-guest-cta main, body.has-guest-cta #view { padding-bottom: 150px; }
 .thread-resa .ph { width: 44px; height: 56px; border-radius: 8px; flex: none; }
 .thread-resa .ph-empty svg { width: 22px; height: 22px; }
 .thread-resa strong { color: var(--accent); display: inline-flex; align-items: center; white-space: nowrap; }
+.notif-nudge { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #FBF1D9; color: #6B4E0C; }
+.notif-nudge svg { flex: none; }
+.warn-text { color: #B4531F; font-weight: 600; }
