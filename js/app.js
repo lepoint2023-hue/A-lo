@@ -75,7 +75,7 @@ function route(keep) {
   }
   if (!out) { location.hash = "#/"; return; }
   const cta = S.isGuest() && !out.noTabbar && !out.bottomBar;
-  view.innerHTML = out.html + (cta ? `<div class="guest-cta" role="region" aria-label="Inscription">
+  view.innerHTML = alertBanner() + out.html + (cta ? `<div class="guest-cta" role="region" aria-label="Inscription">
       <span class="grow"><strong>Inscription gratuite</strong><span class="small block">Pour louer une tenue ou proposer tes vêtements.</span></span>
       <a class="btn sm" href="#/connexion" data-action="signup">S'inscrire</a></div>` : "");
   document.body.classList.toggle("has-guest-cta", cta);
@@ -794,6 +794,7 @@ function locCard(r) {
 function locationDetail(id) {
   const r = S.reservation(id);
   if (!r) return { html: empty("Location introuvable", "", `<a class="btn" href="#/locations">Retour</a>`) };
+  markSeen(r);
   const g = S.group(r);
   const amRenter = r.renterId === S.me().id;
   const other = S.user(amRenter ? r.ownerId : r.renterId);
@@ -885,11 +886,15 @@ function thread(rid) {
   const other = S.user(r.renterId === S.me().id ? r.ownerId : r.renterId);
   const i = S.item(r.itemId) || gone;
   const msgs = S.messages(rid);
+  markSeen(r);
+  const amOwner = r.ownerId === S.me().id;
+  const next = { demandee: amOwner ? "Accepte ou refuse la demande" : "En attente de la réponse de la loueuse", acceptee: amOwner ? "En attente du paiement" : "Il reste à payer", confirmee: "Fixez ensemble le lieu et l'heure de remise", remise: "Location en cours", rendue: amOwner ? "Vérifie l'état et rends la caution" : "La loueuse vérifie l'état", terminee: "Location terminée", refusee: "Demande refusée", annulee: "Réservation annulée", litige: "Problème signalé" }[r.status] || "";
   return {
     tab: "messages", title: other.name,
     html: `<div class="thread">
       <header class="thread-head"><a class="icon-btn" href="#/messages" aria-label="Retour">${icon("back", 20)}</a>${avatar(other)}
         <a class="grow plain" href="#/location/${r.id}"><strong>${esc(other.name)}</strong><span class="muted small block">${esc(i.title)} · ${fmtShort(r.start)} → ${fmtShort(r.end)}</span></a></header>
+      <a class="thread-resa" href="#/location/${r.id}">${photo(i)}<span class="grow">${statusPill(r.status)}<span class="small block">${esc(next)}</span></span><strong class="small">Voir la réservation ${icon("chevron", 14)}</strong></a>
       <div class="bubbles" id="bubbles">${msgs.map((m) => m.from === "system" ? `<p class="sys">${esc(m.text)}</p>` : `<p class="bubble ${m.from === S.me().id ? "me" : ""}">${esc(m.text)}</p>`).join("")}
         ${r.status === "confirmee" ? `<p class="tip">${icon("camera", 16)} À la remise, faites ensemble l'état des lieux photo : il protège la caution.</p>` : ""}</div>
       <form class="composer" id="composer"><label class="grow"><span class="sr">Écrire un message</span><input name="t" placeholder="Écrire un message…" autocomplete="off" maxlength="1000"></label>
@@ -1370,6 +1375,35 @@ function applyAI(a) {
   return n;
 }
 
+
+// ---------------------------------------------------------------- Alertes de réservation (bandeau rouge)
+const seenKey = () => "ailo-seen-" + S.me().id;
+function seenMap() { try { return JSON.parse(localStorage.getItem(seenKey()) || "{}"); } catch (e) { return {}; } }
+function markSeen(r) { if (!r) return; const m = seenMap(); m[r.thread] = r.status; try { localStorage.setItem(seenKey(), JSON.stringify(m)); } catch (e) { /* ignore */ } }
+function reservationAlerts() {
+  if (S.isGuest()) return [];
+  const seen = seenMap(), out = [];
+  const title = (r) => (S.item(r.itemId) || gone).title;
+  for (const r of S.myLendings()) {
+    const who = S.user(r.renterId).name, last = seen[r.thread];
+    if (r.status === "demandee" && last !== "demandee") out.push({ r, text: `${who} veut louer « ${title(r)} »`, cta: "Répondre" });
+    else if (["acceptee", "confirmee"].includes(r.status) && last === undefined) out.push({ r, text: `${who} a réservé « ${title(r)} » (${fmtShort(r.start)} → ${fmtShort(r.end)})`, cta: "Voir" });
+    else if (r.status === "rendue" && last !== "rendue") out.push({ r, text: `« ${title(r)} » t'a été rendu : vérifie l'état`, cta: "Vérifier" });
+  }
+  for (const r of S.myRentals()) {
+    const last = seen[r.thread];
+    if (r.status === "acceptee" && last !== "acceptee") out.push({ r, text: `Demande acceptée pour « ${title(r)} » : il reste à payer`, cta: "Payer" });
+    else if (r.status === "refusee" && last !== "refusee") out.push({ r, text: `Demande refusée pour « ${title(r)} »`, cta: "Voir" });
+  }
+  return out;
+}
+function alertBanner() {
+  const h = location.hash;
+  const list = reservationAlerts().filter((a) => h !== "#/location/" + a.r.id && h !== "#/messages/" + a.r.id);
+  if (!list.length) return "";
+  const a = list[0];
+  return `<a class="resa-alert" href="#/location/${a.r.id}" role="alert">${icon("bell", 18)}<span class="grow">${esc(a.text)}${list.length > 1 ? ` <span class="small">(+${list.length - 1})</span>` : ""}</span><strong>${a.cta} ${icon("chevron", 14)}</strong></a>`;
+}
 
 // ---------------------------------------------------------------- Installer l'app, notifications
 let deferredInstall = null;
