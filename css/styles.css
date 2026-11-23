@@ -401,3 +401,9 @@ button.premium { border: 0; cursor: pointer; font-family: inherit; min-height: 2
 .followers-line { width: 100%; text-align: left; font: inherit; color: var(--ink); cursor: pointer; align-items: center; }
 .report-link { color: var(--muted, #8a8580); font-weight: 500; font-size: 13px; }
 .row.wrap { flex-wrap: wrap; }
+/* v0.9.1 : bandeau d'inscription pour les visiteuses */
+.guest-cta { position: fixed; left: 12px; right: 12px; bottom: calc(74px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; gap: 12px;
+  padding: 10px 10px 10px 16px; border-radius: 16px; background: var(--accent); color: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.18); max-width: 520px; margin: 0 auto; }
+.guest-cta .btn { background: #fff; color: var(--accent); border-color: #fff; }
+body.has-guest-cta main, body.has-guest-cta #view { padding-bottom: 150px; }
+.radios.compact .radio { padding: 10px 12px; }

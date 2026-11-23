@@ -68,6 +68,11 @@ export async function init() {
   });
   const { data } = await sb.auth.getSession();
   session = data.session;
+  // Session gardée sur le téléphone mais compte supprimé entre-temps : on repart comme visiteuse
+  if (session) {
+    const { error } = await sb.auth.getUser();
+    if (error && [401, 403, 404].includes(error.status)) { await sb.auth.signOut({ scope: "local" }).catch(() => {}); session = null; }
+  }
   await sync().catch(() => toast("Connexion à la base impossible. Vérifie ta connexion internet."));
   if (session) listen();
 }

@@ -73,7 +73,11 @@ function route(keep) {
     if (m) { out = fn(...m.slice(1)); break; }
   }
   if (!out) { location.hash = "#/"; return; }
-  view.innerHTML = out.html;
+  const cta = S.isGuest() && !out.noTabbar && !out.bottomBar;
+  view.innerHTML = out.html + (cta ? `<div class="guest-cta" role="region" aria-label="Inscription">
+      <span class="grow"><strong>Inscription gratuite</strong><span class="small block">Pour louer une tenue ou proposer tes vêtements.</span></span>
+      <a class="btn sm" href="#/connexion" data-action="signup">S'inscrire</a></div>` : "");
+  document.body.classList.toggle("has-guest-cta", cta);
   tabbar.hidden = !!out.noTabbar;
   document.body.classList.toggle("has-bottombar", !!out.bottomBar);
   setTab(out.tab);
@@ -243,8 +247,8 @@ function cgu() {
     html: `<div class="page prose">
       <header class="topbar"><button class="icon-btn" data-action="back" aria-label="Retour">${icon("back", 20)}</button><h1 class="h1 inline">Conditions générales</h1><span></span></header>
       <p class="box note small">Brouillon de travail : ces conditions doivent être rédigées et validées par un juriste avant l'ouverture au public.</p>
-      <h2 class="h3">Âge minimum</h2><p>Aïlo est réservée aux personnes de 18 ans et plus. La date de naissance demandée à l'inscription sert uniquement à ce contrôle et n'est pas conservée. La vérification d'identité (avant la première location et avant de recevoir des gains) contrôle aussi l'âge. Tout compte ou contenu concernant une personne mineure est supprimé dès qu'il est signalé.</p>
-      <h2 class="h3">Signaler un contenu</h2><p>Chaque pièce et chaque profil a un bouton « Signaler ». Aïlo examine chaque signalement et retire rapidement les contenus illicites ou contraires à ces conditions.</p>
+      <h2 class="h3">Âge minimum</h2><p>Aïlo est réservée aux personnes de 18 ans et plus. La date de naissance demandée à l'inscription sert uniquement à ce contrôle et n'est pas conservée. En indiquant ta date de naissance, tu certifies être majeure ; une fausse déclaration engage ta responsabilité. Tout compte ou contenu concernant une personne mineure est supprimé dès qu'il est signalé.</p>
+      <h2 class="h3">Signaler un contenu</h2><p>Chaque pièce et chaque profil a un bouton « Signaler ». Aïlo examine chaque signalement en priorité et retire rapidement les contenus illicites ou contraires à ces conditions ; le compte concerné peut être suspendu.</p>
       <h2 class="h3">Le rôle d'Aïlo</h2><p>Aïlo met en relation des particuliers et des professionnelles qui louent des vêtements avec des personnes qui en ont besoin. Aïlo n'est ni propriétaire ni vendeur des pièces.</p>
       <h2 class="h3">Options Premium</h2><p>Certaines options (signalées par une couronne) seront payantes au lancement, comme suivre un profil. Elles sont offertes pendant la bêta.</p>
       <h2 class="h3">Paiement, caution, frais</h2><p>La locataire paie la location, les frais de service (${euro(SERVICE_FEE.fixed)} + ${SERVICE_FEE.rate * 100} % de la location), l'éventuel forfait nettoyage et, en cas d'envoi, un forfait aller-retour de ${euro(SHIPPING_FEE)}. Une caution est bloquée puis remboursée après le retour contrôlé. Aïlo prélève une commission sur la part de la loueuse : ${tiersText()}. Le taux est fixé au moment de la réservation.</p>
@@ -294,7 +298,7 @@ function decouvrir() {
     tab: "decouvrir",
     html: `<div class="page">
       <header class="topbar"><div class="logo">Aïlo</div>
-        <a class="icon-btn" href="#/favoris" aria-label="Mes favoris">${icon("heart", 20)}</a></header>
+        ${S.isGuest() ? `<a class="btn sm" href="#/connexion" data-action="signup">Créer un compte</a>` : `<a class="icon-btn" href="#/favoris" aria-label="Mes favoris">${icon("heart", 20)}</a>`}</header>
       ${installBanner()}
       <p class="muted">${S.isGuest() ? `Bienvenue sur Aïlo · <a href="#/connexion" data-action="to-login">Se connecter</a>` : `Bonjour ${esc(u.name)}`}</p>
       <h1 class="h1">Quelle tenue pour ton prochain événement ?</h1>
@@ -305,7 +309,7 @@ function decouvrir() {
         <button class="icon-btn solid" data-action="open-filters" aria-label="Filtres">${icon("filter", 20)}${n ? `<span class="count-badge">${n}</span>` : ""}</button>
       </div>
       ${S.isGuest() && !u.city
-        ? `<button class="where" data-action="guest-place">${icon("pin", 16)} <strong>Choisis ta commune</strong> <span class="muted">pour voir les pièces près de chez toi</span></button>`
+        ? `<button class="where" data-action="guest-place">${icon("pin", 16)} <span><strong>Choisis ta commune</strong> pour voir les pièces près de chez toi</span></button>`
         : `<button class="where" data-action="${S.isGuest() ? "guest-place" : "open-filters"}">${icon("pin", 16)} Autour de <strong>${esc(u.city)}</strong> · ${Number(f.radius) >= 100 ? "partout" : f.radius + " km"} <span class="muted">Modifier</span></button>`}
       <div class="label-caps">Afficher par</div>
       <div class="seg" role="group" aria-label="Afficher par">${seg.map(([k, l]) => `<button data-action="group" data-k="${k}" aria-pressed="${ui.groupBy === k}">${l}</button>`).join("")}</div>
@@ -880,7 +884,6 @@ function profil() {
         <a href="#/favoris"><span>Mes favoris</span><span class="muted">${S.favorites().length} ${icon("chevron", 16)}</span></a>
         <button data-action="earnings"><span>Mes gains et mon crédit</span><span class="muted">${icon("chevron", 16)}</span></button>
         <button data-action="plans"><span>Mon abonnement</span><span class="muted">${plans[u.plan]} ${icon("chevron", 16)}</span></button>
-        <button data-action="verify"><span>Vérifier mon identité</span><span class="muted">${u.verified ? "Fait" : "À faire"} ${icon("chevron", 16)}</span></button>
         <a href="#/cgu"><span>Conditions générales</span><span class="muted">${icon("chevron", 16)}</span></a>
         <button data-action="logout"><span>Se déconnecter</span><span class="muted">${icon("chevron", 16)}</span></button>
       </nav>
@@ -1060,9 +1063,6 @@ const actions = {
         <div class="box"><strong>Pro</strong><p class="small">Pour les professionnelles : badge Pro, annonces illimitées, page vitrine.</p></div>
       </div>`);
   },
-  verify() {
-    openSheet(`<h2 class="h2">Vérifier mon identité</h2><p class="small">La vérification se fera avec Stripe, le prestataire de paiement : une photo de ta carte d'identité et un selfie. Elle sera demandée avant ta première location et avant de recevoir tes premiers gains.</p><p class="muted small">Pas encore active dans cette version de démonstration.</p>`);
-  },
   async logout() { await S.signOut(); ui.draft = null; ui.booking = {}; ui.filters = freshFilters(); ui.place = null; go("#/"); route(); },
   "auth-mode"(el) { ui.authMode = el.dataset.m; route(true); },
   async pay(el) {
@@ -1144,8 +1144,9 @@ const actions = {
   },
   "photo-search"() { document.getElementById("search-photo").click(); },
   "clear-lookalike"() { ui.lookalike = null; route(true); },
-  guest() { ui.authReason = ""; },
-  "to-login"() { ui.authMode = "login"; ui.authReason = ""; },
+  guest() { ui.authReason = ""; go("#/"); },
+  signup() { ui.authMode = "signup"; ui.authReason = ""; try { sessionStorage.setItem("ailo-after-auth", location.hash || "#/"); } catch (e) { /* ignore */ } go("#/connexion"); route(); },
+  "to-login"() { ui.authMode = "login"; ui.authReason = ""; try { sessionStorage.setItem("ailo-after-auth", location.hash || "#/"); } catch (e) { /* ignore */ } go("#/connexion"); route(); },
   "guest-place"() {
     ui.place = null;
     openSheet(`<h2 class="h2">Ta commune</h2><p class="small muted">Pour afficher les pièces près de chez toi. Rien n'est enregistré ailleurs que sur ton téléphone.</p>${placePicker(null)}
@@ -1160,18 +1161,20 @@ const actions = {
   },
   report(el) {
     const { kind, id } = el.dataset;
-    const reasons = ["Personne mineure sur les photos ou derrière le compte", "Photo ou contenu inapproprié", "Arnaque ou annonce trompeuse", "Contrefaçon", "Autre"];
+    const reasons = ["Personne mineure (sur les photos ou derrière le compte)", "Photo choquante, sexuelle ou inappropriée", "Vêtement contrefait", "Annonce trompeuse (état, taille, photos)", "Arnaque ou paiement demandé hors d'Aïlo", "Vêtement volé", "Harcèlement ou propos insultants", "Faux profil ou usurpation d'identité", "Autre problème"];
     openSheet(`<h2 class="h2">Signaler ${kind === "item" ? "cette pièce" : "ce profil"}</h2>
-      <p class="small muted">Ton signalement est confidentiel. Aïlo l'examine rapidement et retire ce qui ne respecte pas les règles.</p>
-      <div class="radios">${reasons.map((r, k) => `<label class="radio"><input type="radio" name="rep-reason" value="${esc(r)}" ${k === 0 ? "" : ""}><span>${esc(r)}</span></label>`).join("")}</div>
-      <label class="field"><span>Précisions (facultatif)</span><textarea id="rep-details" rows="3" maxlength="500"></textarea></label>
+      <p class="small muted">Ton signalement est confidentiel. Aïlo l'examine en priorité et retire ce qui ne respecte pas les règles.</p>
+      <div class="radios compact">${reasons.map((r) => `<label class="radio"><input type="radio" name="rep-reason" value="${esc(r)}"><span>${esc(r)}</span></label>`).join("")}</div>
+      <label class="field"><span>Décris le problème <span class="muted small">(obligatoire pour « Autre problème »)</span></span><textarea id="rep-details" rows="4" maxlength="500" placeholder="Ce que tu as vu, quand, et tout détail utile."></textarea></label>
       <button type="button" class="btn" data-action="report-send" data-kind="${kind}" data-id="${id}">Envoyer le signalement</button>`);
   },
   async "report-send"(el) {
     const r = document.querySelector("input[name=rep-reason]:checked");
-    if (!r) { toast("Choisis un motif."); return; }
+    const details = document.getElementById("rep-details").value.trim();
+    if (!r && !details) { toast("Choisis un motif ou décris le problème."); return; }
+    if (r && r.value === "Autre problème" && !details) { toast("Décris le problème en quelques mots."); return; }
     el.disabled = true;
-    const ok = await S.report(el.dataset.kind, el.dataset.id, r.value, document.getElementById("rep-details").value.trim());
+    const ok = await S.report(el.dataset.kind, el.dataset.id, r ? r.value : "Autre problème", details);
     document.getElementById("sheet").close();
     toast(ok ? "Merci, ton signalement a été envoyé." : "Le signalement n'a pas pu être envoyé. Réessaie plus tard.");
   },
